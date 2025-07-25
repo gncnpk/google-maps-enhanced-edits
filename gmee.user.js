@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.3
+// @version      0.0.4
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
-// @match        https://www.google.com/maps*
+// @match        https://www.google.com/maps/contrib/*/edits/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com
 // @grant        none
 // @run-at       document-start
 // @license      MIT
+// @downloadURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.user.js
+// @updateURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.meta.js
 // ==/UserScript==
 
 (function() {
