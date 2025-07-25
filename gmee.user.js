@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.2
+// @version      0.0.3
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps*
@@ -14,34 +14,76 @@
 (function() {
   'use strict';
 
-  let currentFilter    = null;
-  let popup, btnContainer, statsDiv;
-  let autoLoadEnabled  = false;
-  let scrollContainer  = null;
-  const shownStatuses  = new Map();
-  const STATUSES       = [
+  // current filters
+  let currentStatusFilter = null;
+  let currentTypeFilter   = null;
+
+  // DOM & state
+  let popup, btnContainer, typeContainer, statsDiv;
+  let autoLoadEnabled = false;
+  let scrollContainer = null;
+  const shownStatuses = new Map();
+  const shownTypes    = new Map();
+
+  const STATUSES = [
     { name: 'Accepted',     color: 'green'  },
     { name: 'Pending',      color: 'yellow' },
     { name: 'Not Accepted', color: 'red'    }
   ];
 
-  // 1) FILTER EDITS
+  // show/hide each edit row based on active filters
   function filterEdits() {
     const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
     if (!edits) return;
-    const prefix = currentFilter
-      ? (currentFilter.startsWith('Not') ? 'Not' : currentFilter.slice(0,3))
+    const statusPrefix = currentStatusFilter
+      ? (currentStatusFilter.startsWith('Not')
+          ? 'Not'
+          : currentStatusFilter.slice(0, 3))
       : null;
+
     Array.from(edits.children).forEach(item => {
-      const t = item.querySelector('.fontTitleSmall');
-      if (!t) return;
-      item.style.display = !prefix
-        ? ''
-        : (t.innerText.trim().startsWith(prefix) ? '' : 'none');
+      let visible = true;
+
+      // status filter
+      if (statusPrefix) {
+        const t = item.querySelector('.fontTitleSmall');
+        if (!t || !t.innerText.trim().startsWith(statusPrefix)) {
+          visible = false;
+        }
+      }
+
+      // type filter
+      if (visible && currentTypeFilter) {
+        const b = item.querySelectorAll('.BjkJBb')[0].children[1];
+        if (!b) {
+          visible = false;
+        } else {
+          const parts = b.innerText.split(',').map(p => p.trim());
+          if (!parts.includes(currentTypeFilter)) {
+            visible = false;
+          }
+        }
+      }
+
+      item.style.display = visible ? '' : 'none';
     });
   }
 
-  // 2) DRAGGABLE POPUP (only header acts as handle)
+  // outline the active filter buttons
+  function updateActiveButtons() {
+    shownStatuses.forEach((btn, name) => {
+      btn.style.outline = (name === currentStatusFilter)
+        ? '2px solid blue'
+        : 'none';
+    });
+    shownTypes.forEach((btn, type) => {
+      btn.style.outline = (type === currentTypeFilter)
+        ? '2px solid blue'
+        : 'none';
+    });
+  }
+
+  // make an element draggable by its header
   function makeDraggable(el, handleSelector) {
     const handle = el.querySelector(handleSelector);
     if (!handle) return;
@@ -71,7 +113,6 @@
         el.releasePointerCapture(e.pointerId);
       }
     });
-
     el.addEventListener('pointercancel', e => {
       if (el.hasPointerCapture(e.pointerId)) {
         el.releasePointerCapture(e.pointerId);
@@ -79,7 +120,7 @@
     });
   }
 
-  // 3) FIND THE SCROLLABLE CONTAINER
+  // find the nearest scrollable container
   function getScrollContainer(el) {
     let p = el;
     while (p && p !== document.body) {
@@ -93,38 +134,35 @@
     return null;
   }
 
-  // 4) UPDATE BUTTONS & STATS, AUTO-SCROLL IF ENABLED
+  // recalculate counts & (re)create/remove filter buttons
   function updateButtonsAndStats(editsContainer) {
     // locate scroll container once
     if (!scrollContainer) {
       scrollContainer = getScrollContainer(editsContainer)
-                     || document.querySelector(
-                          '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde'
-                        );
+        || document.querySelector(
+          '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde'
+        );
     }
 
-    // count prefixes
-    const counts = { Acc: 0, Pen: 0, Not: 0 };
+    // --- STATUS COUNTS ---
+    const sCounts = { Acc: 0, Pen: 0, Not: 0 };
     Array.from(editsContainer.children).forEach(item => {
       const t = item.querySelector('.fontTitleSmall');
       if (!t) return;
       const txt = t.innerText.trim();
-      const key = txt.startsWith('Not') ? 'Not' : txt.slice(0,3);
-      if (counts.hasOwnProperty(key)) counts[key]++;
+      const key = txt.startsWith('Not') ? 'Not' : txt.slice(0, 3);
+      if (sCounts.hasOwnProperty(key)) sCounts[key]++;
     });
 
-    // update total
-    const total = counts.Acc + counts.Pen + counts.Not;
+    const total = sCounts.Acc + sCounts.Pen + sCounts.Not;
     statsDiv.textContent = `Total edits: ${total}`;
 
-    // update status buttons
     STATUSES.forEach(s => {
-      const p      = s.name.startsWith('Not') ? 'Not' : s.name.slice(0,3);
-      const count  = counts[p] || 0;
+      const prefix = s.name.startsWith('Not') ? 'Not' : s.name.slice(0,3);
+      const count  = sCounts[prefix] || 0;
       const present= count > 0;
 
       if (present && !shownStatuses.has(s.name)) {
-        // add button
         const btn = document.createElement('button');
         btn.textContent = `${s.name} (${count})`;
         Object.assign(btn.style, {
@@ -133,39 +171,90 @@
           borderRadius: '4px',
           color: '#000',
           padding: '6px 10px',
-          margin: '0 4px',
+          margin: '0 4px 4px 0',
           cursor: 'pointer'
         });
         btn.addEventListener('click', () => {
-          currentFilter = s.name;
+          currentStatusFilter =
+            currentStatusFilter === s.name ? null : s.name;
           filterEdits();
+          updateActiveButtons();
         });
         shownStatuses.set(s.name, btn);
         btnContainer.appendChild(btn);
 
       } else if (present && shownStatuses.has(s.name)) {
-        // update count
         shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
 
       } else if (!present && shownStatuses.has(s.name)) {
-        // remove button
         const btn = shownStatuses.get(s.name);
         btnContainer.removeChild(btn);
         shownStatuses.delete(s.name);
-        if (currentFilter === s.name) {
-          currentFilter = null;
+        if (currentStatusFilter === s.name) {
+          currentStatusFilter = null;
           filterEdits();
         }
       }
     });
 
-    // auto-scroll if checked
+    // --- TYPE COUNTS ---
+    const typeCounts = {};
+    Array.from(editsContainer.children).forEach(item => {
+      const b = item.querySelectorAll('.BjkJBb')[0].children[1];
+      if (!b) return;
+      b.innerText.split(',').forEach(part => {
+        const txt = part.trim();
+        if (!txt) return;
+        typeCounts[txt] = (typeCounts[txt]||0) + 1;
+      });
+    });
+
+    Object.entries(typeCounts).forEach(([type, count]) => {
+      const present = count > 0;
+      if (present && !shownTypes.has(type)) {
+        const btn = document.createElement('button');
+        btn.textContent = `${type} (${count})`;
+        Object.assign(btn.style, {
+          backgroundColor: 'lightgray',
+          border: 'none',
+          borderRadius: '4px',
+          color: '#000',
+          padding: '6px 10px',
+          margin: '0 4px 4px 0',
+          cursor: 'pointer'
+        });
+        btn.addEventListener('click', () => {
+          currentTypeFilter =
+            currentTypeFilter === type ? null : type;
+          filterEdits();
+          updateActiveButtons();
+        });
+        shownTypes.set(type, btn);
+        typeContainer.appendChild(btn);
+
+      } else if (present && shownTypes.has(type)) {
+        shownTypes.get(type).textContent = `${type} (${count})`;
+
+      } else if (!present && shownTypes.has(type)) {
+        const btn = shownTypes.get(type);
+        typeContainer.removeChild(btn);
+        shownTypes.delete(type);
+        if (currentTypeFilter === type) {
+          currentTypeFilter = null;
+          filterEdits();
+        }
+      }
+    });
+
+    // auto-scroll
     if (autoLoadEnabled && scrollContainer) {
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
+
+    updateActiveButtons();
   }
 
-  // 5) BUILD & SHOW POPUP
+  // build the floating popup
   function createPopup() {
     popup = document.createElement('div');
     Object.assign(popup.style, {
@@ -178,7 +267,8 @@
       boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       padding: '10px',
       zIndex: '9999',
-      textAlign: 'center'
+      textAlign: 'left',
+      width: '240px'
     });
 
     // header / drag handle
@@ -194,7 +284,7 @@
     statsDiv.style.marginBottom = '8px';
     popup.appendChild(statsDiv);
 
-    // auto-load checkbox
+    // auto-load
     const autoLoadDiv = document.createElement('div');
     autoLoadDiv.style.marginBottom = '8px';
     const chk = document.createElement('input');
@@ -207,7 +297,6 @@
     autoLoadDiv.appendChild(chk);
     autoLoadDiv.appendChild(lbl);
     popup.appendChild(autoLoadDiv);
-
     chk.addEventListener('change', () => {
       autoLoadEnabled = chk.checked;
       if (autoLoadEnabled && scrollContainer) {
@@ -215,24 +304,37 @@
       }
     });
 
-    // button container
+    // status buttons container
     btnContainer = document.createElement('div');
     popup.appendChild(btnContainer);
+
+    // type header + container
+    const typeHeader = document.createElement('div');
+    typeHeader.textContent = 'Filter edits by type:';
+    typeHeader.style.margin = '8px 0 4px';
+    popup.appendChild(typeHeader);
+
+    typeContainer = document.createElement('div');
+    popup.appendChild(typeContainer);
 
     document.body.appendChild(popup);
     makeDraggable(popup, '.drag-handle');
   }
 
-  // 6) WAIT FOR EDITS CONTAINER & INSTALL OBSERVER
+  // wait for the edits list to appear, then hook it
   function watchForContainer() {
     function trySetup() {
       const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
       if (!edits) return false;
       updateButtonsAndStats(edits);
-      if (currentFilter) filterEdits();
+      if (currentStatusFilter || currentTypeFilter) {
+        filterEdits();
+      }
       new MutationObserver(() => {
         updateButtonsAndStats(edits);
-        if (currentFilter) filterEdits();
+        if (currentStatusFilter || currentTypeFilter) {
+          filterEdits();
+        }
       }).observe(edits, { childList: true });
       return true;
     }
@@ -245,7 +347,6 @@
     }
   }
 
-  // 7) INIT
   function init() {
     createPopup();
     watchForContainer();
