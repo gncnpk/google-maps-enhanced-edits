@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.1
+// @version      0.0.2
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps*
@@ -14,23 +14,25 @@
 (function() {
   'use strict';
 
-  let currentFilter = null;
-  let popup, btnContainer;
-  const shownStatuses = new Map();
-  const STATUSES = [
+  let currentFilter    = null;
+  let popup, btnContainer, statsDiv;
+  let autoLoadEnabled  = false;
+  let scrollContainer  = null;
+  const shownStatuses  = new Map();
+  const STATUSES       = [
     { name: 'Accepted',     color: 'green'  },
     { name: 'Pending',      color: 'yellow' },
     { name: 'Not Accepted', color: 'red'    }
   ];
 
-  // Show/hide items based on currentFilter
+  // 1) FILTER EDITS
   function filterEdits() {
-    const container = document.getElementsByClassName('m6QErb XiKgde')[3];
-    if (!container) return;
+    const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
+    if (!edits) return;
     const prefix = currentFilter
-      ? (currentFilter.startsWith('Not') ? 'Not' : currentFilter.slice(0, 3))
+      ? (currentFilter.startsWith('Not') ? 'Not' : currentFilter.slice(0,3))
       : null;
-    Array.from(container.children).forEach(item => {
+    Array.from(edits.children).forEach(item => {
       const t = item.querySelector('.fontTitleSmall');
       if (!t) return;
       item.style.display = !prefix
@@ -39,13 +41,15 @@
     });
   }
 
-  // Make the popup draggable via pointer events
-  function makeDraggable(el) {
+  // 2) DRAGGABLE POPUP (only header acts as handle)
+  function makeDraggable(el, handleSelector) {
+    const handle = el.querySelector(handleSelector);
+    if (!handle) return;
+    handle.style.cursor = 'move';
     let offsetX = 0, offsetY = 0;
-    el.addEventListener('pointerdown', e => {
-      if (e.target.closest('button')) return;
+
+    handle.addEventListener('pointerdown', e => {
       const r = el.getBoundingClientRect();
-      // snap to pixel and remove any transform/right positioning
       el.style.left      = `${r.left}px`;
       el.style.top       = `${r.top}px`;
       el.style.right     = 'auto';
@@ -55,16 +59,19 @@
       el.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
+
     el.addEventListener('pointermove', e => {
       if (!el.hasPointerCapture(e.pointerId)) return;
       el.style.left = `${e.clientX - offsetX}px`;
       el.style.top  = `${e.clientY - offsetY}px`;
     });
+
     el.addEventListener('pointerup', e => {
       if (el.hasPointerCapture(e.pointerId)) {
         el.releasePointerCapture(e.pointerId);
       }
     });
+
     el.addEventListener('pointercancel', e => {
       if (el.hasPointerCapture(e.pointerId)) {
         el.releasePointerCapture(e.pointerId);
@@ -72,22 +79,54 @@
     });
   }
 
-  // Scan the container for which 3-letter prefixes exist, add/remove buttons
-  function updateButtons(container) {
-    const prefixes = new Set(
-      Array.from(container.children)
-        .map(item => {
-          const t = item.querySelector('.fontTitleSmall');
-          return t ? t.innerText.trim().substring(0, 3) : null;
-        })
-        .filter(Boolean)
-    );
+  // 3) FIND THE SCROLLABLE CONTAINER
+  function getScrollContainer(el) {
+    let p = el;
+    while (p && p !== document.body) {
+      const style = getComputedStyle(p);
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll')
+          && p.scrollHeight > p.clientHeight) {
+        return p;
+      }
+      p = p.parentElement;
+    }
+    return null;
+  }
+
+  // 4) UPDATE BUTTONS & STATS, AUTO-SCROLL IF ENABLED
+  function updateButtonsAndStats(editsContainer) {
+    // locate scroll container once
+    if (!scrollContainer) {
+      scrollContainer = getScrollContainer(editsContainer)
+                     || document.querySelector(
+                          '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde'
+                        );
+    }
+
+    // count prefixes
+    const counts = { Acc: 0, Pen: 0, Not: 0 };
+    Array.from(editsContainer.children).forEach(item => {
+      const t = item.querySelector('.fontTitleSmall');
+      if (!t) return;
+      const txt = t.innerText.trim();
+      const key = txt.startsWith('Not') ? 'Not' : txt.slice(0,3);
+      if (counts.hasOwnProperty(key)) counts[key]++;
+    });
+
+    // update total
+    const total = counts.Acc + counts.Pen + counts.Not;
+    statsDiv.textContent = `Total edits: ${total}`;
+
+    // update status buttons
     STATUSES.forEach(s => {
-      const p = s.name.startsWith('Not') ? 'Not' : s.name.slice(0, 3);
-      const present = prefixes.has(p);
+      const p      = s.name.startsWith('Not') ? 'Not' : s.name.slice(0,3);
+      const count  = counts[p] || 0;
+      const present= count > 0;
+
       if (present && !shownStatuses.has(s.name)) {
+        // add button
         const btn = document.createElement('button');
-        btn.textContent = s.name;
+        btn.textContent = `${s.name} (${count})`;
         Object.assign(btn.style, {
           backgroundColor: s.color,
           border: 'none',
@@ -103,8 +142,13 @@
         });
         shownStatuses.set(s.name, btn);
         btnContainer.appendChild(btn);
-      }
-      if (!present && shownStatuses.has(s.name)) {
+
+      } else if (present && shownStatuses.has(s.name)) {
+        // update count
+        shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
+
+      } else if (!present && shownStatuses.has(s.name)) {
+        // remove button
         const btn = shownStatuses.get(s.name);
         btnContainer.removeChild(btn);
         shownStatuses.delete(s.name);
@@ -114,51 +158,85 @@
         }
       }
     });
+
+    // auto-scroll if checked
+    if (autoLoadEnabled && scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
   }
 
-  // Build and inject the popup in the top-right
+  // 5) BUILD & SHOW POPUP
   function createPopup() {
     popup = document.createElement('div');
     Object.assign(popup.style, {
       position: 'fixed',
       top: '10px',
       right: '10px',
-      transform: 'none',
       backgroundColor: '#fff',
       border: '1px solid #ccc',
       borderRadius: '6px',
       boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
       padding: '10px',
       zIndex: '9999',
-      textAlign: 'center',
-      cursor: 'move'
+      textAlign: 'center'
     });
+
+    // header / drag handle
     const header = document.createElement('div');
     header.textContent = 'Filter edits by status:';
+    header.classList.add('drag-handle');
     header.style.marginBottom = '8px';
     popup.appendChild(header);
+
+    // stats
+    statsDiv = document.createElement('div');
+    statsDiv.textContent = 'Total edits: 0';
+    statsDiv.style.marginBottom = '8px';
+    popup.appendChild(statsDiv);
+
+    // auto-load checkbox
+    const autoLoadDiv = document.createElement('div');
+    autoLoadDiv.style.marginBottom = '8px';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.id   = 'gmee-auto-load';
+    const lbl = document.createElement('label');
+    lbl.htmlFor     = 'gmee-auto-load';
+    lbl.textContent = 'Auto load all edits';
+    lbl.style.marginLeft = '4px';
+    autoLoadDiv.appendChild(chk);
+    autoLoadDiv.appendChild(lbl);
+    popup.appendChild(autoLoadDiv);
+
+    chk.addEventListener('change', () => {
+      autoLoadEnabled = chk.checked;
+      if (autoLoadEnabled && scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+
+    // button container
     btnContainer = document.createElement('div');
     popup.appendChild(btnContainer);
+
     document.body.appendChild(popup);
-    makeDraggable(popup);
+    makeDraggable(popup, '.drag-handle');
   }
 
-  // Watch for the 4th edits-container to appear, then wire up button updates
+  // 6) WAIT FOR EDITS CONTAINER & INSTALL OBSERVER
   function watchForContainer() {
-    const trySetup = () => {
-      const c = document.getElementsByClassName('m6QErb XiKgde')[3];
-      if (c) {
-        updateButtons(c);
+    function trySetup() {
+      const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
+      if (!edits) return false;
+      updateButtonsAndStats(edits);
+      if (currentFilter) filterEdits();
+      new MutationObserver(() => {
+        updateButtonsAndStats(edits);
         if (currentFilter) filterEdits();
-        const mo = new MutationObserver(() => {
-          updateButtons(c);
-          if (currentFilter) filterEdits();
-        });
-        mo.observe(c, { childList: true });
-        return true;
-      }
-      return false;
-    };
+      }).observe(edits, { childList: true });
+      return true;
+    }
+
     if (!trySetup()) {
       const bodyObs = new MutationObserver((_, obs) => {
         if (trySetup()) obs.disconnect();
@@ -167,6 +245,7 @@
     }
   }
 
+  // 7) INIT
   function init() {
     createPopup();
     watchForContainer();
