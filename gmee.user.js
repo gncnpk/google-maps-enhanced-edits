@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.4
+// @version      0.0.5
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*/edits/*
@@ -9,8 +9,8 @@
 // @grant        none
 // @run-at       document-start
 // @license      MIT
-// @downloadURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.user.js
-// @updateURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.user.js
+// @updateURL    https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.meta.js
 // ==/UserScript==
 
 (function() {
@@ -28,9 +28,9 @@
   const shownTypes    = new Map();
 
   const STATUSES = [
-    { name: 'Accepted',     color: 'green'  },
-    { name: 'Pending',      color: 'yellow' },
-    { name: 'Not Accepted', color: 'red'    }
+    { name: 'Accepted',     color: '#198639' },
+    { name: 'Pending',      color: '#b26c00' },
+    { name: 'Not Accepted', color: '#dc362e' }
   ];
 
   // show/hide each edit row based on active filters
@@ -38,9 +38,8 @@
     const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
     if (!edits) return;
     const statusPrefix = currentStatusFilter
-      ? (currentStatusFilter.startsWith('Not')
-          ? 'Not'
-          : currentStatusFilter.slice(0, 3))
+      ? (currentStatusFilter.startsWith('Not') ? 'Not'
+                                               : currentStatusFilter.slice(0, 3))
       : null;
 
     Array.from(edits.children).forEach(item => {
@@ -49,18 +48,23 @@
       // status filter
       if (statusPrefix) {
         const t = item.querySelector('.fontTitleSmall');
-        if (!t || !t.innerText.trim().startsWith(statusPrefix)) {
+        if (!t) {
           visible = false;
+        } else {
+          const titleTxt = t.textContent.trim();
+          if (!titleTxt.startsWith(statusPrefix)) {
+            visible = false;
+          }
         }
       }
 
       // type filter
       if (visible && currentTypeFilter) {
-        const b = item.querySelectorAll('.BjkJBb')[0].children[1];
+        const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
         if (!b) {
           visible = false;
         } else {
-          const parts = b.innerText.split(',').map(p => p.trim());
+          const parts = b.textContent.split(',').map(p => p.trim());
           if (!parts.includes(currentTypeFilter)) {
             visible = false;
           }
@@ -109,16 +113,12 @@
       el.style.left = `${e.clientX - offsetX}px`;
       el.style.top  = `${e.clientY - offsetY}px`;
     });
-
-    el.addEventListener('pointerup', e => {
-      if (el.hasPointerCapture(e.pointerId)) {
-        el.releasePointerCapture(e.pointerId);
-      }
-    });
-    el.addEventListener('pointercancel', e => {
-      if (el.hasPointerCapture(e.pointerId)) {
-        el.releasePointerCapture(e.pointerId);
-      }
+    ['pointerup','pointercancel'].forEach(evt => {
+      el.addEventListener(evt, e => {
+        if (el.hasPointerCapture(e.pointerId)) {
+          el.releasePointerCapture(e.pointerId);
+        }
+      });
     });
   }
 
@@ -127,8 +127,8 @@
     let p = el;
     while (p && p !== document.body) {
       const style = getComputedStyle(p);
-      if ((style.overflowY === 'auto' || style.overflowY === 'scroll')
-          && p.scrollHeight > p.clientHeight) {
+      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+          p.scrollHeight > p.clientHeight) {
         return p;
       }
       p = p.parentElement;
@@ -140,10 +140,8 @@
   function updateButtonsAndStats(editsContainer) {
     // locate scroll container once
     if (!scrollContainer) {
-      scrollContainer = getScrollContainer(editsContainer)
-        || document.querySelector(
-          '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde'
-        );
+      scrollContainer = getScrollContainer(editsContainer) ||
+        document.querySelector('.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde');
     }
 
     // --- STATUS COUNTS ---
@@ -151,7 +149,7 @@
     Array.from(editsContainer.children).forEach(item => {
       const t = item.querySelector('.fontTitleSmall');
       if (!t) return;
-      const txt = t.innerText.trim();
+      const txt = t.textContent.trim();
       const key = txt.startsWith('Not') ? 'Not' : txt.slice(0, 3);
       if (sCounts.hasOwnProperty(key)) sCounts[key]++;
     });
@@ -202,9 +200,9 @@
     // --- TYPE COUNTS ---
     const typeCounts = {};
     Array.from(editsContainer.children).forEach(item => {
-      const b = item.querySelectorAll('.BjkJBb')[0].children[1];
+      const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
       if (!b) return;
-      b.innerText.split(',').forEach(part => {
+      b.textContent.split(',').forEach(part => {
         const txt = part.trim();
         if (!txt) return;
         typeCounts[txt] = (typeCounts[txt]||0) + 1;
