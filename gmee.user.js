@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.5
+// @version      0.0.6
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
-// @match        https://www.google.com/maps/contrib/*/edits/*
+// @match        https://www.google.com/maps/contrib/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com
 // @grant        none
 // @run-at       document-start
