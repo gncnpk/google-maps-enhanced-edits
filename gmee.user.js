@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.8
+// @version      0.0.9
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
@@ -16,8 +16,8 @@
 (function() {
     'use strict';
     // inject a global CSS rule
-  const style = document.createElement('style');
-  style.textContent = `
+    const style = document.createElement('style');
+    style.textContent = `
     .qjoALb {
       margin-bottom: 0 !important;
     }
@@ -28,7 +28,7 @@
       margin-bottom: 0 !important;
     }
     .BjkJBb {
-      margin: 8px !important;
+      margin: 0px 8px 0px !important;
     }
     .JjQyvd {
       margin: 0 8px 10px !important;
@@ -40,7 +40,7 @@
       padding: 10px !important;
     }
   `;
-  document.head.appendChild(style);
+    document.head.appendChild(style);
 
     // current filters
     let currentStatusFilter = null;
@@ -72,42 +72,63 @@
     ];
 
     // Automatically clean up .eYfez panes and symbol parents
-function setupAutoCleanup() {
-  const CLEAN_SELECTOR   = '.eYfez';
-  const SYMBOL_SELECTOR  = '.MaIKSd.google-symbols.G47vBd';
+    function setupAutoCleanup() {
+        const CLEAN_SELECTOR = '.eYfez';
+        const SYMBOL_SELECTOR = '.MaIKSd.google-symbols.G47vBd';
+        const PANE_SELECTOR = '.EhpEb'
+        const observer = new MutationObserver(() => {
+            cleanPanes();
+            removeSymbolParents();
+            replaceSpecificEdit();
+        });
 
-  // remove first child of each .eYfez pane
-  function cleanPanes() {
-    document.querySelectorAll(CLEAN_SELECTOR).forEach(pane => {
-      const first = pane.firstElementChild;
-      if (first && pane.children.length >= 2) first.remove();
-    });
-  }
+        // remove first child of each .eYfez pane
+        function cleanPanes() {
+            document.querySelectorAll(CLEAN_SELECTOR).forEach(pane => {
+                const first = pane.firstElementChild;
+                if (first && pane.children.length >= 2) first.remove();
+            });
+        }
 
-  // remove the parent of any matching symbol element
-  function removeSymbolParents() {
-    document.querySelectorAll(SYMBOL_SELECTOR).forEach(el => {
-      const p = el.parentElement;
-      if (p) {
-        p.remove();
-      }
-    });
-  }
+        // remove the parent of any matching symbol element
+        function removeSymbolParents() {
+            document.querySelectorAll(SYMBOL_SELECTOR).forEach(el => {
+                const p = el.parentElement;
+                if (p) {
+                    p.remove();
+                }
+            });
+        }
 
-  // initial pass
-  cleanPanes();
-  removeSymbolParents();
+        function replaceSpecificEdit() {
+            observer.disconnect();
+            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
+                const mediumEl = item.querySelector(
+                    '.fontBodyMedium.JjQyvd.TqOXoe'
+                );
+                const smallEl = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+                if (mediumEl && smallEl) {
+                    const texts = Array.from(
+                        mediumEl.querySelectorAll('.NlVald.xMSdlb')
+                    ).map(el => el.textContent.trim());
+                    smallEl.textContent = texts.join(', ');
+                }
+            });
+            observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        }
 
-  // observe all future additions
-  const observer = new MutationObserver(() => {
-    cleanPanes();
-    removeSymbolParents();
-  });
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-}
+        // initial pass
+        cleanPanes();
+        removeSymbolParents();
+        replaceSpecificEdit();
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
 
     // --- filterEdits() ---
     function filterEdits() {
