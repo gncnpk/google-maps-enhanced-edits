@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.6
+// @version      0.0.7
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
@@ -27,53 +27,48 @@
   const shownStatuses = new Map();
   const shownTypes    = new Map();
 
-  const STATUSES = [
-    { name: 'Accepted',     color: '#198639' },
-    { name: 'Pending',      color: '#b26c00' },
-    { name: 'Not Accepted', color: '#dc362e' }
-  ];
+// Replace your old STATUSES definition with this:
+const STATUSES = [
+  { name: 'Accepted',     className: 'cLk0Bb', color: '#198639' },
+  { name: 'Pending',      className: 'UgJ9Rc', color: '#b26c00' },
+  { name: 'Not Accepted', className: 'ehaAif', color: '#dc362e' }
+];
 
-  // show/hide each edit row based on active filters
-  function filterEdits() {
-    const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
-    if (!edits) return;
-    const statusPrefix = currentStatusFilter
-      ? (currentStatusFilter.startsWith('Not') ? 'Not'
-                                               : currentStatusFilter.slice(0, 3))
-      : null;
+// --- filterEdits() ---
+function filterEdits() {
+  const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
+  if (!edits) return;
 
-    Array.from(edits.children).forEach(item => {
-      let visible = true;
+  Array.from(edits.children).forEach(item => {
+    let visible = true;
 
-      // status filter
-      if (statusPrefix) {
-        const t = item.querySelector('.fontTitleSmall');
-        if (!t) {
+    // status filter via CSS class
+    if (currentStatusFilter) {
+      const statusObj = STATUSES.find(s => s.name === currentStatusFilter);
+      if (
+        !statusObj ||
+        !item.querySelector(`.${statusObj.className}`)
+      ) {
+        visible = false;
+      }
+    }
+
+    // type filter remains unchanged
+    if (visible && currentTypeFilter) {
+      const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+      if (!b) {
+        visible = false;
+      } else {
+        const parts = b.textContent.split(',').map(p => p.trim());
+        if (!parts.includes(currentTypeFilter)) {
           visible = false;
-        } else {
-          const titleTxt = t.textContent.trim();
-          if (!titleTxt.startsWith(statusPrefix)) {
-            visible = false;
-          }
         }
       }
+    }
 
-      // type filter
-      if (visible && currentTypeFilter) {
-        const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-        if (!b) {
-          visible = false;
-        } else {
-          const parts = b.textContent.split(',').map(p => p.trim());
-          if (!parts.includes(currentTypeFilter)) {
-            visible = false;
-          }
-        }
-      }
-
-      item.style.display = visible ? '' : 'none';
-    });
-  }
+    item.style.display = visible ? '' : 'none';
+  });
+}
 
   // outline the active filter buttons
   function updateActiveButtons() {
@@ -136,123 +131,124 @@
     return null;
   }
 
-  // recalculate counts & (re)create/remove filter buttons
   function updateButtonsAndStats(editsContainer) {
-    // locate scroll container once
-    if (!scrollContainer) {
-      scrollContainer = getScrollContainer(editsContainer) ||
-        document.querySelector('.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde');
-    }
-
-    // --- STATUS COUNTS ---
-    const sCounts = { Acc: 0, Pen: 0, Not: 0 };
-    Array.from(editsContainer.children).forEach(item => {
-      const t = item.querySelector('.fontTitleSmall');
-      if (!t) return;
-      const txt = t.textContent.trim();
-      const key = txt.startsWith('Not') ? 'Not' : txt.slice(0, 3);
-      if (sCounts.hasOwnProperty(key)) sCounts[key]++;
-    });
-
-    const total = sCounts.Acc + sCounts.Pen + sCounts.Not;
-    statsDiv.textContent = `Total edits: ${total}`;
-
-    STATUSES.forEach(s => {
-      const prefix = s.name.startsWith('Not') ? 'Not' : s.name.slice(0,3);
-      const count  = sCounts[prefix] || 0;
-      const present= count > 0;
-
-      if (present && !shownStatuses.has(s.name)) {
-        const btn = document.createElement('button');
-        btn.textContent = `${s.name} (${count})`;
-        Object.assign(btn.style, {
-          backgroundColor: s.color,
-          border: 'none',
-          borderRadius: '4px',
-          color: '#000',
-          padding: '6px 10px',
-          margin: '0 4px 4px 0',
-          cursor: 'pointer'
-        });
-        btn.addEventListener('click', () => {
-          currentStatusFilter =
-            currentStatusFilter === s.name ? null : s.name;
-          filterEdits();
-          updateActiveButtons();
-        });
-        shownStatuses.set(s.name, btn);
-        btnContainer.appendChild(btn);
-
-      } else if (present && shownStatuses.has(s.name)) {
-        shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
-
-      } else if (!present && shownStatuses.has(s.name)) {
-        const btn = shownStatuses.get(s.name);
-        btnContainer.removeChild(btn);
-        shownStatuses.delete(s.name);
-        if (currentStatusFilter === s.name) {
-          currentStatusFilter = null;
-          filterEdits();
-        }
-      }
-    });
-
-    // --- TYPE COUNTS ---
-    const typeCounts = {};
-    Array.from(editsContainer.children).forEach(item => {
-      const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-      if (!b) return;
-      b.textContent.split(',').forEach(part => {
-        const txt = part.trim();
-        if (!txt) return;
-        typeCounts[txt] = (typeCounts[txt]||0) + 1;
-      });
-    });
-
-    Object.entries(typeCounts).forEach(([type, count]) => {
-      const present = count > 0;
-      if (present && !shownTypes.has(type)) {
-        const btn = document.createElement('button');
-        btn.textContent = `${type} (${count})`;
-        Object.assign(btn.style, {
-          backgroundColor: 'lightgray',
-          border: 'none',
-          borderRadius: '4px',
-          color: '#000',
-          padding: '6px 10px',
-          margin: '0 4px 4px 0',
-          cursor: 'pointer'
-        });
-        btn.addEventListener('click', () => {
-          currentTypeFilter =
-            currentTypeFilter === type ? null : type;
-          filterEdits();
-          updateActiveButtons();
-        });
-        shownTypes.set(type, btn);
-        typeContainer.appendChild(btn);
-
-      } else if (present && shownTypes.has(type)) {
-        shownTypes.get(type).textContent = `${type} (${count})`;
-
-      } else if (!present && shownTypes.has(type)) {
-        const btn = shownTypes.get(type);
-        typeContainer.removeChild(btn);
-        shownTypes.delete(type);
-        if (currentTypeFilter === type) {
-          currentTypeFilter = null;
-          filterEdits();
-        }
-      }
-    });
-
-    // auto-scroll
-    if (autoLoadEnabled && scrollContainer) {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-    }
-
-    updateActiveButtons();
+  // locate scroll container once
+  if (!scrollContainer) {
+    scrollContainer = getScrollContainer(editsContainer) ||
+      document.querySelector('.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde');
   }
+
+  // --- STATUS COUNTS by CSS class ---
+  const sCounts = {};
+  STATUSES.forEach(s => { sCounts[s.name] = 0; });
+
+  Array.from(editsContainer.children).forEach(item => {
+    STATUSES.forEach(s => {
+      if (item.querySelector(`.${s.className}`)) {
+        sCounts[s.name]++;
+      }
+    });
+  });
+
+  const total = Object.values(sCounts).reduce((a, b) => a + b, 0);
+  statsDiv.textContent = `Total edits: ${total}`;
+
+  // create / update / remove status buttons
+  STATUSES.forEach(s => {
+    const count   = sCounts[s.name] || 0;
+    const present = count > 0;
+
+    if (present && !shownStatuses.has(s.name)) {
+      const btn = document.createElement('button');
+      btn.textContent = `${s.name} (${count})`;
+      Object.assign(btn.style, {
+        backgroundColor: s.color,
+        border: 'none',
+        borderRadius: '4px',
+        color: '#000',
+        padding: '6px 10px',
+        margin: '0 4px 4px 0',
+        cursor: 'pointer'
+      });
+      btn.addEventListener('click', () => {
+        currentStatusFilter =
+          currentStatusFilter === s.name ? null : s.name;
+        filterEdits();
+        updateActiveButtons();
+      });
+      shownStatuses.set(s.name, btn);
+      btnContainer.appendChild(btn);
+
+    } else if (present && shownStatuses.has(s.name)) {
+      // just update the count
+      shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
+
+    } else if (!present && shownStatuses.has(s.name)) {
+      // remove the button
+      const btn = shownStatuses.get(s.name);
+      btnContainer.removeChild(btn);
+      shownStatuses.delete(s.name);
+      if (currentStatusFilter === s.name) {
+        currentStatusFilter = null;
+        filterEdits();
+      }
+    }
+  });
+
+  // --- TYPE COUNTS (unchanged) ---
+  const typeCounts = {};
+  Array.from(editsContainer.children).forEach(item => {
+    const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+    if (!b) return;
+    b.textContent.split(',').forEach(part => {
+      const txt = part.trim();
+      if (!txt) return;
+      typeCounts[txt] = (typeCounts[txt] || 0) + 1;
+    });
+  });
+  Object.entries(typeCounts).forEach(([type, count]) => {
+    const present = count > 0;
+    if (present && !shownTypes.has(type)) {
+      const btn = document.createElement('button');
+      btn.textContent = `${type} (${count})`;
+      Object.assign(btn.style, {
+        backgroundColor: 'lightgray',
+        border: 'none',
+        borderRadius: '4px',
+        color: '#000',
+        padding: '6px 10px',
+        margin: '0 4px 4px 0',
+        cursor: 'pointer'
+      });
+      btn.addEventListener('click', () => {
+        currentTypeFilter = currentTypeFilter === type ? null : type;
+        filterEdits();
+        updateActiveButtons();
+      });
+      shownTypes.set(type, btn);
+      typeContainer.appendChild(btn);
+
+    } else if (present && shownTypes.has(type)) {
+      shownTypes.get(type).textContent = `${type} (${count})`;
+
+    } else if (!present && shownTypes.has(type)) {
+      const btn = shownTypes.get(type);
+      typeContainer.removeChild(btn);
+      shownTypes.delete(type);
+      if (currentTypeFilter === type) {
+        currentTypeFilter = null;
+        filterEdits();
+      }
+    }
+  });
+
+  // auto-scroll if enabled
+  if (autoLoadEnabled && scrollContainer) {
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }
+
+  updateActiveButtons();
+}
 
   // build the floating popup
   function createPopup() {
