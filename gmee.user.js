@@ -161,6 +161,7 @@
     // --- filterEdits() ---
     function filterEdits() {
         const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
+        scrollContainer.scrollTop = 0;
         if (!edits) return;
 
         Array.from(edits.children).forEach(item => {
