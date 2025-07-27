@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.11
+// @version      0.0.12
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
@@ -42,6 +42,9 @@
     .uLTO2d {
       margin: 8px !important;
     }
+    .fontTitleLarge.HYVdIf:hover {
+      text-decoration: underline;
+    }
   `;
     document.head.appendChild(style);
 
@@ -80,11 +83,13 @@
         const CLEAN_SELECTOR = '.eYfez';
         const SYMBOL_SELECTOR = '.MaIKSd.google-symbols.G47vBd';
         const PANE_SELECTOR = '.EhpEb'
+        const EDIT_NAME_SELECTOR = '.fontTitleLarge.HYVdIf'
         const observer = new MutationObserver(() => {
             cleanPanes();
             removeSymbolParents();
             replaceSpecificEdit();
             addColorStrip();
+            addTooltipToEditName();
         });
 
         // remove first child of each .eYfez pane
@@ -146,12 +151,24 @@
             });
         }
 
+        function addTooltipToEditName() {
+            observer.disconnect();
+            document.querySelectorAll(EDIT_NAME_SELECTOR).forEach(item => {
+                item.title = "Go to map edit";
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
 
         // initial pass
         cleanPanes();
         removeSymbolParents();
         replaceSpecificEdit();
         addColorStrip();
+        addTooltipToEditName();
         observer.observe(document.body, {
             childList: true,
             subtree: true
