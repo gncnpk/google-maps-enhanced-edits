@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.9
+// @version      0.0.10
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
@@ -28,7 +28,7 @@
       margin-bottom: 4px !important;
     }
     .BjkJBb {
-      margin: 4px !important;
+      margin: 6px !important;
     }
     .JjQyvd {
       margin: 0 8px 10px !important;
@@ -83,6 +83,7 @@
             cleanPanes();
             removeSymbolParents();
             replaceSpecificEdit();
+            addColorStrip();
         });
 
         // remove first child of each .eYfez pane
@@ -123,10 +124,33 @@
             });
         }
 
+        function addColorStrip() {
+            observer.disconnect();
+            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
+                const wrap = item.querySelector('.Jo6p1e');
+                if (!wrap) return;
+                // find which status this item has
+                const statusObj = STATUSES.find(s => item.querySelector(`.${s.className}`));
+                if (statusObj) {
+                    wrap.style.borderLeft = `10px solid ${statusObj.color}`;
+                    item.querySelector(`.${statusObj.className}`).style = "display: none !important;";
+                } else {
+                    // no status found → clear any old border
+                    wrap.style.borderLeft = '';
+                }
+            });
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
+
         // initial pass
         cleanPanes();
         removeSymbolParents();
         replaceSpecificEdit();
+        addColorStrip();
         observer.observe(document.body, {
             childList: true,
             subtree: true
