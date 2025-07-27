@@ -9,8 +9,8 @@
 // @grant        none
 // @run-at       document-start
 // @license      MIT
-// @downloadURL  https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.user.js
-// @updateURL    https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.meta.js
+// @downloadURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.user.js
+// @updateURL https://update.greasyfork.org/scripts/543559/Google%20Maps%20Enhanced%20Edits.meta.js
 // ==/UserScript==
 
 (function() {
@@ -25,10 +25,10 @@
       margin-bottom: 0 !important;
     }
     .zOQ8Le {
-      margin-bottom: 0 !important;
+      margin-bottom: 4px !important;
     }
     .BjkJBb {
-      margin: 0px 8px 0px !important;
+      margin: 4px !important;
     }
     .JjQyvd {
       margin: 0 8px 10px !important;
@@ -38,6 +38,9 @@
     }
     .Jo6p1e {
       padding: 10px !important;
+    }
+    .uLTO2d {
+      margin: 8px !important;
     }
   `;
     document.head.appendChild(style);
@@ -115,9 +118,9 @@
                 }
             });
             observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
+                childList: true,
+                subtree: true
+            });
         }
 
         // initial pass
