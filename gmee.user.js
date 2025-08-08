@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.12
+// @version      0.0.23
 // @description  Improves the edits section on Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
@@ -45,17 +45,57 @@
     .fontTitleLarge.HYVdIf:hover {
       text-decoration: underline;
     }
+    /* Date filter disabled states */
+    .quick-date-btn:disabled,
+    .clear-date-btn:disabled {
+      background: #e0e0e0 !important;
+      color: #999 !important;
+      cursor: not-allowed !important;
+      border-color: #ccc !important;
+    }
+    input[type="date"]:disabled {
+      background: #f5f5f5 !important;
+      color: #999 !important;
+      cursor: not-allowed !important;
+    }
+    /* Edit numbering styles */
+    .edit-number {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: #4285f4;
+      color: white;
+      font-size: 12px;
+      font-weight: bold;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .edit-number.hidden {
+      display: none !important;
+    }
+    .Jo6p1e {
+      position: relative !important;
+    }
   `;
     document.head.appendChild(style);
 
     // current filters
     let currentStatusFilter = null;
     let currentTypeFilter = null;
+    let currentDateFilter = null; // Date object or null
+    let currentDateRangeEnd = null; // Date object for range end or null
     let editsContainer  = null;
 
     // DOM & state
-    let popup, btnContainer, typeContainer, statsDiv;
+    let popup, btnContainer, typeContainer, dateContainer, statsDiv;
     let autoLoadEnabled = false;
+    let numberingEnabled = true; // Track numbering toggle state
     let scrollContainer = null;
     const shownStatuses = new Map();
     const shownTypes = new Map();
@@ -78,6 +118,232 @@
         }
     ];
 
+    // Helper function to parse date from edit text
+    function parseEditDate(dateText) {
+        if (!dateText) return null;
+        
+        const now = new Date();
+        let editDate;
+        
+        // Handle "Submitted [Month] [Day]" format (e.g., "Submitted Aug 7")
+        if (dateText.includes('Submitted')) {
+            const submittedMatch = dateText.match(/Submitted\s+([A-Za-z]+)\s+(\d+)/i);
+            if (submittedMatch) {
+                const monthStr = submittedMatch[1];
+                const day = parseInt(submittedMatch[2]);
+                const currentYear = now.getFullYear();
+                
+                // Parse the month name to get month index
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                                      'July', 'August', 'September', 'October', 'November', 'December'];
+                
+                let monthIndex = monthNames.findIndex(m => monthStr.toLowerCase().startsWith(m.toLowerCase()));
+                if (monthIndex === -1) {
+                    monthIndex = fullMonthNames.findIndex(m => monthStr.toLowerCase() === m.toLowerCase());
+                }
+                
+                if (monthIndex !== -1) {
+                    editDate = new Date(currentYear, monthIndex, day);
+                    
+                    // If the date is in the future, assume it's from last year
+                    if (editDate > now) {
+                        editDate.setFullYear(currentYear - 1);
+                    }
+                }
+            }
+        }
+        // Handle relative dates like "2 days ago", "1 week ago", etc.
+        else if (dateText.includes('ago')) {
+            const match = dateText.match(/(\d+)\s*(day|week|month|year)s?\s*ago/i);
+            if (match) {
+                const amount = parseInt(match[1]);
+                const unit = match[2].toLowerCase();
+                editDate = new Date(now);
+                
+                switch (unit) {
+                    case 'day':
+                        editDate.setDate(editDate.getDate() - amount);
+                        break;
+                    case 'week':
+                        editDate.setDate(editDate.getDate() - (amount * 7));
+                        break;
+                    case 'month':
+                        editDate.setMonth(editDate.getMonth() - amount);
+                        break;
+                    case 'year':
+                        editDate.setFullYear(editDate.getFullYear() - amount);
+                        break;
+                }
+            }
+        } 
+        // Handle "today", "yesterday" text
+        else if (dateText.toLowerCase().includes('today')) {
+            editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        }
+        else if (dateText.toLowerCase().includes('yesterday')) {
+            editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            editDate.setDate(editDate.getDate() - 1);
+        }
+        else {
+            // Try to parse absolute dates
+            editDate = new Date(dateText);
+            if (isNaN(editDate.getTime())) {
+                return null;
+            }
+        }
+        
+        return editDate && !isNaN(editDate.getTime()) ? editDate : null;
+    }
+
+    // Helper function to get date range of available edits
+    function getEditDateRange() {
+        if (!editsContainer) return { min: null, max: null, hasEdits: false };
+        
+        const editItems = Array.from(editsContainer.children);
+        const dates = [];
+        
+        editItems.forEach(item => {
+            // Skip items that are still loading
+            if (isEditItemLoading(item)) return;
+            
+            const dateElement = item.querySelector('.fontBodySmall.eYfez');
+            if (dateElement) {
+                const dateText = dateElement.textContent.trim();
+                const parsedDate = parseEditDate(dateText);
+                if (parsedDate) {
+                    dates.push(parsedDate);
+                }
+            }
+        });
+        
+        if (dates.length === 0) {
+            return { min: null, max: null, hasEdits: false };
+        }
+        
+        const sortedDates = dates.sort((a, b) => a - b);
+        return {
+            min: sortedDates[0],
+            max: sortedDates[sortedDates.length - 1],
+            hasEdits: true
+        };
+    }
+
+    // Helper function to update date input constraints
+    function updateDateInputConstraints() {
+        const startDateInput = dateContainer.querySelector('input[type="date"]:first-of-type');
+        const endDateInput = dateContainer.querySelector('input[type="date"]:last-of-type');
+        const quickDateButtons = dateContainer.querySelectorAll('.quick-date-btn');
+        const clearBtn = dateContainer.querySelector('.clear-date-btn');
+        
+        if (!startDateInput || !endDateInput) return;
+        
+        const dateRange = getEditDateRange();
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+        
+        // Set max date to today for both inputs
+        startDateInput.max = todayStr;
+        endDateInput.max = todayStr;
+        
+        if (dateRange.hasEdits) {
+            // Set min date to earliest edit date
+            const minDateStr = dateRange.min.toISOString().split('T')[0];
+            startDateInput.min = minDateStr;
+            endDateInput.min = minDateStr;
+            
+            // Enable inputs and buttons
+            startDateInput.disabled = false;
+            endDateInput.disabled = false;
+            quickDateButtons.forEach(btn => btn.disabled = false);
+            clearBtn.disabled = currentDateFilter === null;
+            
+            // Update placeholder text
+            startDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
+            endDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
+        } else {
+            // Disable inputs and buttons when no edits are available
+            startDateInput.disabled = true;
+            endDateInput.disabled = true;
+            startDateInput.value = '';
+            endDateInput.value = '';
+            quickDateButtons.forEach(btn => btn.disabled = true);
+            clearBtn.disabled = true;
+            
+            // Update placeholder text
+            startDateInput.title = 'No edits available for date filtering';
+            endDateInput.title = 'No edits available for date filtering';
+        }
+    }
+
+    // Helper function to check if an edit item is still loading
+    function isEditItemLoading(item) {
+        // Check for common indicators that content is still loading
+        const dateElement = item.querySelector('.fontBodySmall.eYfez');
+        const titleElement = item.querySelector('.fontTitleLarge.HYVdIf');
+        const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+        
+        // If key elements are missing or empty, consider it still loading
+        if (!dateElement || !titleElement || !typeElement) return true;
+        if (!dateElement.textContent.trim() || !titleElement.textContent.trim() || !typeElement.textContent.trim()) return true;
+        
+        // Check for loading indicators or placeholder text
+        const dateText = dateElement.textContent.trim();
+        const titleText = titleElement.textContent.trim();
+        
+        if (dateText.includes('Loading') || titleText.includes('Loading') || 
+            dateText === '...' || titleText === '...') return true;
+        
+        return false;
+    }
+
+    // Helper function to check if edit date is in selected range
+    function isDateInRange(dateText) {
+        if (!currentDateFilter) return true;
+        
+        // If date text is empty or not yet loaded, don't filter it out
+        if (!dateText || dateText.trim() === '') return true;
+        
+        const editDate = parseEditDate(dateText);
+        if (!editDate) return true; // Include items we can't parse or that haven't loaded yet
+        
+        const editDateOnly = new Date(editDate.getFullYear(), editDate.getMonth(), editDate.getDate());
+        const filterDateOnly = new Date(currentDateFilter.getFullYear(), currentDateFilter.getMonth(), currentDateFilter.getDate());
+        
+        if (currentDateRangeEnd) {
+            // Range filtering
+            const endDateOnly = new Date(currentDateRangeEnd.getFullYear(), currentDateRangeEnd.getMonth(), currentDateRangeEnd.getDate());
+            return editDateOnly >= filterDateOnly && editDateOnly <= endDateOnly;
+        } else {
+            // Single date filtering
+            return editDateOnly.getTime() === filterDateOnly.getTime();
+        }
+    }
+
+    // Add numbering to all edit items (moved to global scope)
+    function addEditNumbering() {
+        const PANE_SELECTOR = '.EhpEb';
+        document.querySelectorAll(PANE_SELECTOR).forEach((item, index) => {
+            const wrap = item.querySelector('.Jo6p1e');
+            if (!wrap) return;
+            
+            // Remove existing number if present
+            const existingNumber = wrap.querySelector('.edit-number');
+            if (existingNumber) {
+                existingNumber.remove();
+            }
+            
+            // Add new number only if numbering is enabled
+            if (numberingEnabled) {
+                const numberElement = document.createElement('div');
+                numberElement.className = 'edit-number';
+                numberElement.textContent = index + 1;
+                wrap.appendChild(numberElement);
+            }
+        });
+    }
+
     // Automatically clean up .eYfez panes and symbol parents
     function setupAutoCleanup() {
         const CLEAN_SELECTOR = '.eYfez';
@@ -90,6 +356,7 @@
             replaceSpecificEdit();
             addColorStrip();
             addTooltipToEditName();
+            addEditNumberingLocal();
         });
 
         // remove first child of each .eYfez pane
@@ -162,6 +429,15 @@
             });
         }
 
+        function addEditNumberingLocal() {
+            observer.disconnect();
+            addEditNumbering();
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
 
         // initial pass
         cleanPanes();
@@ -169,10 +445,65 @@
         replaceSpecificEdit();
         addColorStrip();
         addTooltipToEditName();
+        addEditNumberingLocal();
         observer.observe(document.body, {
             childList: true,
             subtree: true
         });
+    }
+
+    // Update edit numbering based on visible items
+    function updateEditNumbering() {
+        if (!editsContainer || !numberingEnabled) return;
+        
+        const allItems = Array.from(editsContainer.children);
+        let visibleIndex = 1;
+        
+        allItems.forEach(item => {
+            const wrap = item.querySelector('.Jo6p1e');
+            const numberElement = wrap?.querySelector('.edit-number');
+            
+            if (getComputedStyle(item).display !== 'none') {
+                // Item is visible, update number
+                if (numberElement) {
+                    numberElement.textContent = visibleIndex;
+                    numberElement.style.display = '';
+                }
+                visibleIndex++;
+            } else {
+                // Item is hidden, hide number
+                if (numberElement) {
+                    numberElement.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // Toggle edit numbering on/off
+    function toggleEditNumbering() {
+        numberingEnabled = !numberingEnabled;
+        
+        if (numberingEnabled) {
+            // Show all existing numbers
+            document.querySelectorAll('.edit-number').forEach(numberEl => {
+                numberEl.classList.remove('hidden');
+            });
+            // Re-add numbering to any items that don't have numbers yet
+            addEditNumbering();
+            updateEditNumbering();
+        } else {
+            // Hide all numbers
+            document.querySelectorAll('.edit-number').forEach(numberEl => {
+                numberEl.classList.add('hidden');
+            });
+        }
+        
+        // Update toggle button text
+        const toggleBtn = document.querySelector('.toggle-numbering-btn');
+        if (toggleBtn) {
+            toggleBtn.textContent = numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
+            toggleBtn.style.backgroundColor = numberingEnabled ? '#ea4335' : '#34a853';
+        }
     }
 
     // --- filterEdits() ---
@@ -183,6 +514,12 @@
 
         Array.from(edits.children).forEach(item => {
             let visible = true;
+
+            // If the item is still loading, always keep it visible to avoid premature filtering
+            if (isEditItemLoading(item)) {
+                item.style.display = '';
+                return;
+            }
 
             // status filter via CSS class
             if (currentStatusFilter) {
@@ -208,8 +545,30 @@
                 }
             }
 
+            // date filter
+            if (visible && currentDateFilter) {
+                const dateElement = item.querySelector('.fontBodySmall.eYfez');
+                if (!dateElement) {
+                    // If no date element exists yet, don't filter it out (content may still be loading)
+                    visible = true;
+                } else {
+                    const dateText = dateElement.textContent.trim();
+                    // If date text is empty or just whitespace, assume content is still loading
+                    if (!dateText || dateText === '') {
+                        visible = true;
+                    } else {
+                        if (!isDateInRange(dateText)) {
+                            visible = false;
+                        }
+                    }
+                }
+            }
+
             item.style.display = visible ? '' : 'none';
         });
+        
+        // Update numbering after filtering
+        updateEditNumbering();
     }
 
     // outline the active filter buttons
@@ -391,6 +750,15 @@
     }
   });
 
+  // Update date filter display
+  updateDateFilterDisplay();
+
+  // Update date input constraints based on available edits
+  updateDateInputConstraints();
+
+  // Update edit numbering
+  updateEditNumbering();
+
   // auto-scroll if needed
   if (autoLoadEnabled && scrollContainer) {
     scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -398,6 +766,36 @@
 
   updateActiveButtons();
 }
+
+    // Update date filter display
+    function updateDateFilterDisplay() {
+        const dateStatus = dateContainer.querySelector('.date-status');
+        if (dateStatus) {
+            if (currentDateFilter) {
+                const startDate = currentDateFilter.toLocaleDateString();
+                if (currentDateRangeEnd) {
+                    const endDate = currentDateRangeEnd.toLocaleDateString();
+                    dateStatus.textContent = `Filtering: ${startDate} - ${endDate}`;
+                } else {
+                    dateStatus.textContent = `Filtering: ${startDate}`;
+                }
+                dateStatus.style.color = '#4285f4';
+                dateStatus.style.fontWeight = 'bold';
+            } else {
+                dateStatus.textContent = 'No date filter active';
+                dateStatus.style.color = '#666';
+                dateStatus.style.fontWeight = 'normal';
+            }
+        }
+    }
+
+    // Clear date filter
+    function clearDateFilter() {
+        currentDateFilter = null;
+        currentDateRangeEnd = null;
+        filterEdits();
+        updateButtonsAndStats();
+    }
 
     // build the floating popup
     function createPopup() {
@@ -413,7 +811,7 @@
             padding: '10px',
             zIndex: '9999',
             textAlign: 'left',
-            width: '240px'
+            width: '280px'
         });
 
         // header / drag handle
@@ -462,6 +860,275 @@
         typeContainer = document.createElement('div');
         popup.appendChild(typeContainer);
 
+        // date header + container
+        const dateHeader = document.createElement('div');
+        dateHeader.textContent = 'Filter edits by date:';
+        dateHeader.style.margin = '8px 0 4px';
+        popup.appendChild(dateHeader);
+
+        dateContainer = document.createElement('div');
+        
+        // Date status display
+        const dateStatus = document.createElement('div');
+        dateStatus.className = 'date-status';
+        dateStatus.textContent = 'No date filter active';
+        dateStatus.style.cssText = `
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #666;
+        `;
+        dateContainer.appendChild(dateStatus);
+
+        // Date input container
+        const dateInputContainer = document.createElement('div');
+        dateInputContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 8px;
+        `;
+
+        // Start date input
+        const startDateInput = document.createElement('input');
+        startDateInput.type = 'date';
+        startDateInput.style.cssText = `
+            padding: 4px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+        `;
+        startDateInput.addEventListener('change', () => {
+            if (startDateInput.value) {
+                const selectedDate = new Date(startDateInput.value + 'T00:00:00');
+                const today = new Date();
+                today.setHours(23, 59, 59, 999); // End of today
+                
+                // Validate date is not in the future
+                if (selectedDate > today) {
+                    alert('Cannot select a future date');
+                    startDateInput.value = '';
+                    return;
+                }
+                
+                // Validate date is within available edit range
+                const dateRange = getEditDateRange();
+                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
+                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateString()}`);
+                    startDateInput.value = '';
+                    return;
+                }
+                
+                currentDateFilter = selectedDate;
+                // If end date is set and start > end, clear end date
+                if (currentDateRangeEnd && currentDateFilter > currentDateRangeEnd) {
+                    currentDateRangeEnd = null;
+                    endDateInput.value = '';
+                }
+                filterEdits();
+                updateButtonsAndStats();
+            } else {
+                currentDateFilter = null;
+                currentDateRangeEnd = null;
+                filterEdits();
+                updateButtonsAndStats();
+            }
+        });
+
+        // End date input (for range selection)
+        const endDateInput = document.createElement('input');
+        endDateInput.type = 'date';
+        endDateInput.placeholder = 'End date (optional)';
+        endDateInput.style.cssText = `
+            padding: 4px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+        `;
+        endDateInput.addEventListener('change', () => {
+            if (endDateInput.value) {
+                const selectedDate = new Date(endDateInput.value + 'T23:59:59');
+                const today = new Date();
+                today.setHours(23, 59, 59, 999); // End of today
+                
+                // Validate date is not in the future
+                if (selectedDate > today) {
+                    alert('Cannot select a future date');
+                    endDateInput.value = '';
+                    return;
+                }
+                
+                // Validate date is within available edit range
+                const dateRange = getEditDateRange();
+                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
+                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateString()}`);
+                    endDateInput.value = '';
+                    return;
+                }
+                
+                if (currentDateFilter && selectedDate >= currentDateFilter) {
+                    currentDateRangeEnd = selectedDate;
+                } else if (!currentDateFilter) {
+                    // If no start date, set both to same date
+                    currentDateFilter = new Date(endDateInput.value + 'T00:00:00');
+                    currentDateRangeEnd = selectedDate;
+                    startDateInput.value = endDateInput.value;
+                } else {
+                    // End date is before start date, swap them
+                    currentDateRangeEnd = currentDateFilter;
+                    currentDateFilter = new Date(endDateInput.value + 'T00:00:00');
+                    startDateInput.value = endDateInput.value;
+                }
+                filterEdits();
+                updateButtonsAndStats();
+            } else {
+                currentDateRangeEnd = null;
+                filterEdits();
+                updateButtonsAndStats();
+            }
+        });
+
+        // Labels and inputs
+        const startLabel = document.createElement('label');
+        startLabel.textContent = 'Start date:';
+        startLabel.style.fontSize = '12px';
+        
+        const endLabel = document.createElement('label');
+        endLabel.textContent = 'End date (optional):';
+        endLabel.style.fontSize = '12px';
+
+        dateInputContainer.appendChild(startLabel);
+        dateInputContainer.appendChild(startDateInput);
+        dateInputContainer.appendChild(endLabel);
+        dateInputContainer.appendChild(endDateInput);
+
+        // Quick date buttons
+        const quickDateContainer = document.createElement('div');
+        quickDateContainer.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 8px;
+        `;
+
+        const quickDates = [
+            { name: 'Today', days: 0 },
+            { name: 'Yesterday', days: 1 },
+            { name: 'Last 7 days', days: 7 },
+            { name: 'Last 30 days', days: 30 }
+        ];
+
+        quickDates.forEach(({ name, days }) => {
+            const btn = document.createElement('button');
+            btn.textContent = name;
+            btn.className = 'quick-date-btn';
+            btn.style.cssText = `
+                background: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+                cursor: pointer;
+                flex: 1;
+            `;
+            btn.addEventListener('click', () => {
+                // Check if we have edits available
+                const dateRange = getEditDateRange();
+                if (!dateRange.hasEdits) {
+                    alert('No edits available for date filtering');
+                    return;
+                }
+                
+                const now = new Date();
+                if (days === 0) {
+                    // Today only - check if we have edits for today
+                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    if (today < dateRange.min || today > dateRange.max) {
+                        alert('No edits available for today');
+                        return;
+                    }
+                    currentDateFilter = today;
+                    currentDateRangeEnd = null;
+                    startDateInput.value = currentDateFilter.toISOString().split('T')[0];
+                    endDateInput.value = '';
+                } else {
+                    // Range from X days ago to today
+                    let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
+                    const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    
+                    // Adjust start date if it's before our earliest edit
+                    if (startDate < dateRange.min) {
+                        startDate = dateRange.min;
+                    }
+                    
+                    // Check if the range contains any edits
+                    if (startDate > dateRange.max) {
+                        alert(`No edits available in the last ${days} days`);
+                        return;
+                    }
+                    
+                    currentDateFilter = startDate;
+                    currentDateRangeEnd = endDate;
+                    startDateInput.value = startDate.toISOString().split('T')[0];
+                    endDateInput.value = endDate.toISOString().split('T')[0];
+                }
+                filterEdits();
+                updateButtonsAndStats();
+            });
+            quickDateContainer.appendChild(btn);
+        });
+
+        // Clear button
+        const clearBtn = document.createElement('button');
+        clearBtn.textContent = 'Clear Filter';
+        clearBtn.className = 'clear-date-btn';
+        clearBtn.style.cssText = `
+            background: #dc362e;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+        `;
+        clearBtn.addEventListener('click', () => {
+            startDateInput.value = '';
+            endDateInput.value = '';
+            clearDateFilter();
+        });
+
+        dateContainer.appendChild(dateInputContainer);
+        dateContainer.appendChild(quickDateContainer);
+        dateContainer.appendChild(clearBtn);
+        popup.appendChild(dateContainer);
+
+        // Edit numbering controls
+        const numberingHeader = document.createElement('div');
+        numberingHeader.textContent = 'Display options:';
+        numberingHeader.style.margin = '8px 0 4px';
+        popup.appendChild(numberingHeader);
+
+        const numberingContainer = document.createElement('div');
+        numberingContainer.style.marginBottom = '8px';
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.textContent = numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
+        toggleBtn.className = 'toggle-numbering-btn';
+        toggleBtn.style.cssText = `
+            background: ${numberingEnabled ? '#ea4335' : '#34a853'};
+            border: none;
+            border-radius: 4px;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+        `;
+        toggleBtn.addEventListener('click', toggleEditNumbering);
+
+        numberingContainer.appendChild(toggleBtn);
+        popup.appendChild(numberingContainer);
+
         document.body.appendChild(popup);
         makeDraggable(popup, '.drag-handle');
     }
@@ -473,12 +1140,12 @@
     if (!edits) return false;
     editsContainer = edits;              // grab it here
     updateButtonsAndStats();
-    if (currentStatusFilter || currentTypeFilter) {
+    if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
       filterEdits();
     }
     new MutationObserver(() => {
       updateButtonsAndStats();
-      if (currentStatusFilter || currentTypeFilter) {
+      if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
         filterEdits();
       }
     }).observe(editsContainer, { childList: true });
