@@ -2,7 +2,7 @@
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
 // @version      0.0.13
-// @description  Improves the edits section on Google Maps.
+// @description  Adds quality of life tweaks to the Edits tab in Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/contrib/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com/maps
