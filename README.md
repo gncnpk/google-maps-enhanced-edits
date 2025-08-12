@@ -1,2 +1,2 @@
 # google-maps-enhanced-edits
-Improves the edits section on Google Maps.
+Adds quality of life tweaks to the Edits tab in Google Maps.
