@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.14
-// @description  Adds quality of life tweaks to the Edits tab in Google Maps.
+// @version      0.0.15
+// @description  Adds quality of life tweaks to the editing experience in Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
-// @match        https://www.google.com/maps/contrib/*
+// @match        https://www.google.com/maps/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=google.com/maps
 // @grant        none
 // @run-at       document-start
@@ -15,6 +15,16 @@
 
 (function() {
     'use strict';
+
+    let isInit = false;
+    let isEventHandlersInit = false;
+    let oldHref = document.location.href;
+
+    // Store observers for cleanup
+    let autoCleanupObserver = null;
+    let containerObserver = null;
+    let bodyObserver = null;
+
     // inject a global CSS rule
     const style = document.createElement('style');
     style.textContent = `
@@ -60,27 +70,78 @@
     }
     /* Edit numbering styles */
     .edit-number {
-      position: absolute;
-      bottom: 8px;
-      right: 8px;
+      position: relative;
+      margin-top: auto;
+      margin-bottom: auto;
+      margin-right: 5px;
       background: #4285f4;
       color: white;
       font-size: 12px;
       font-weight: bold;
       width: 24px;
       height: 24px;
-      border-radius: 50%;
+      border-radius: 0%;
       z-index: 10;
       display: flex;
       align-items: center;
       justify-content: center;
+      min-width: 24px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      transition: all 0.3s ease;
     }
     .edit-number.hidden {
       display: none !important;
     }
+    .edit-number.highlight {
+      background: #ea4335 !important;
+      transform: scale(1.2);
+      box-shadow: 0 0 15px rgba(234, 67, 53, 0.8);
+    }
     .Jo6p1e {
       position: relative !important;
+    }
+    .m6QErb.XiKgde.ecceSd.JoFlEe {
+      width: auto !important;
+    }
+    .YWlkcf.fVTiyc {
+      margin-top: auto !important;
+      margin-bottom: auto !important;
+    }
+    .PInAKb {
+      border-radius: 0% !important;
+      margin-right: 5px !important;
+    }
+    /* Go to edit number styles */
+    .go-to-edit-container {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .go-to-edit-input {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .go-to-edit-btn {
+      background: #4285f4;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .go-to-edit-btn:hover {
+      background: #3367d6;
+    }
+    .go-to-edit-btn:disabled {
+      background: #e0e0e0;
+      color: #999;
+      cursor: not-allowed;
     }
   `;
     document.head.appendChild(style);
@@ -90,15 +151,23 @@
     let currentTypeFilter = null;
     let currentDateFilter = null; // Date object or null
     let currentDateRangeEnd = null; // Date object for range end or null
-    let editsContainer  = null;
+    let editsContainer = null;
 
-    // DOM & state
+    // DOM & state - Load numbering preference from localStorage
     let popup, btnContainer, typeContainer, dateContainer, statsDiv;
     let autoLoadEnabled = false;
-    let numberingEnabled = true; // Track numbering toggle state
+    let numberingEnabled = localStorage.getItem('gmee-numbering-enabled') !== 'false'; // Default to true, false only if explicitly set
     let scrollContainer = null;
     const shownStatuses = new Map();
     const shownTypes = new Map();
+
+    // LocalStorage key for user preferences
+    const STORAGE_KEY = 'gmee-numbering-enabled';
+
+    // Function to save numbering preference
+    function saveNumberingPreference() {
+        localStorage.setItem(STORAGE_KEY, numberingEnabled.toString());
+    }
 
     // Replace your old STATUSES definition with this:
     const STATUSES = [{
@@ -115,16 +184,245 @@
             name: 'Not Accepted',
             className: 'ehaAif',
             color: '#dc362e'
+        },
+        {
+            name: 'Incorrect',
+            className: 'gZbGnf',
+            color: '#5e5e5e'
         }
     ];
+
+    // Improved function to find edits container with multiple strategies
+    function findEditsContainer() {
+        // Strategy 1: Look for containers with edit items (.EhpEb class)
+        const editItems = document.querySelectorAll('.EhpEb');
+        if (editItems.length > 0) {
+            // Find the common parent container
+            let container = editItems[0].parentElement;
+            while (container && container.children.length < editItems.length) {
+                container = container.parentElement;
+            }
+            if (container && container.children.length >= editItems.length) {
+                return container;
+            }
+        }
+
+        // Strategy 2: Look for containers with multiple m6QErb XiKgde elements
+        const containers = Array.from(document.querySelectorAll('.m6QErb.XiKgde'))
+            .filter(el => {
+                const parent = el.parentElement;
+                return parent && Array.from(parent.children).filter(child =>
+                    child.classList.contains('m6QErb') && child.classList.contains('XiKgde')
+                ).length > 1;
+            });
+
+        if (containers.length > 0) {
+            // Find the container with the most edit-like items
+            let bestContainer = null;
+            let maxEditItems = 0;
+
+            containers.forEach(container => {
+                const editCount = container.querySelectorAll('.EhpEb, .Jo6p1e').length;
+                if (editCount > maxEditItems) {
+                    maxEditItems = editCount;
+                    bestContainer = container;
+                }
+            });
+
+            if (bestContainer) {
+                return bestContainer;
+            }
+        }
+
+        // Strategy 3: Original fallback method
+        const potentialContainers = document.getElementsByClassName('m6QErb XiKgde');
+        for (let i = 0; i < potentialContainers.length; i++) {
+            const container = potentialContainers[i];
+            const editItems = container.querySelectorAll('.EhpEb');
+            if (editItems.length > 0) {
+                return container;
+            }
+        }
+
+        return null;
+    }
+
+    // Improved function to find scroll container
+    function findScrollContainer() {
+        // Strategy 1: Find container with edits
+        if (editsContainer) {
+            let container = editsContainer;
+            while (container && container !== document.body) {
+                const style = getComputedStyle(container);
+                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                    container.scrollHeight > container.clientHeight) {
+                    return container;
+                }
+                container = container.parentElement;
+            }
+        }
+
+        // Strategy 2: Look for common Google Maps scroll containers
+        const commonScrollSelectors = [
+            '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde',
+            '.CsJaGe',
+            '.siAUzd.Vetdqc',
+            '[role="main"]'
+        ];
+
+        for (const selector of commonScrollSelectors) {
+            const container = document.querySelector(selector);
+            if (container) {
+                const style = getComputedStyle(container);
+                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                    container.scrollHeight > container.clientHeight) {
+                    return container;
+                }
+            }
+        }
+
+        // Strategy 3: Find any scrollable container that contains edits
+        const scrollableElements = Array.from(document.querySelectorAll('*')).filter(el => {
+            const style = getComputedStyle(el);
+            return (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                el.scrollHeight > el.clientHeight &&
+                el.querySelector('.EhpEb');
+        });
+
+        return scrollableElements.length > 0 ? scrollableElements[0] : null;
+    }
+
+    // Function to go to specific edit number
+    function goToEditNumber(targetNumber) {
+        if (!editsContainer || !numberingEnabled) {
+            alert('Edit numbering must be enabled to use this feature');
+            return;
+        }
+
+        // Get all visible edit items
+        const allItems = Array.from(editsContainer.children);
+        const visibleItems = allItems.filter(item => getComputedStyle(item).display !== 'none');
+
+        if (targetNumber < 1 || targetNumber > visibleItems.length) {
+            alert(`Please enter a number between 1 and ${visibleItems.length}`);
+            return;
+        }
+
+        const targetItem = visibleItems[targetNumber - 1];
+        if (!targetItem) return;
+
+        // Clear any existing highlights
+        document.querySelectorAll('.edit-number.highlight').forEach(el => {
+            el.classList.remove('highlight');
+        });
+
+        // Find and highlight the target edit number
+        const numberElement = targetItem.querySelector('.edit-number');
+        if (numberElement) {
+            numberElement.classList.add('highlight');
+
+            // Remove highlight after 3 seconds
+            setTimeout(() => {
+                numberElement.classList.remove('highlight');
+            }, 3000);
+        }
+
+        // Scroll to the target item
+        if (scrollContainer) {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const itemRect = targetItem.getBoundingClientRect();
+
+            // Calculate scroll position to center the item
+            const scrollTop = scrollContainer.scrollTop + itemRect.top - containerRect.top - (containerRect.height / 2) + (itemRect.height / 2);
+
+            scrollContainer.scrollTo({
+                top: scrollTop,
+                behavior: 'smooth'
+            });
+        } else {
+            // Fallback: scroll into view
+            targetItem.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+        }
+    }
+
+    // Deinitialize function to clean up when leaving edits page
+    function deinitializeEditsUI() {
+        console.log('Deinitializing Google Maps Enhanced Edits UI');
+
+        // Remove popup
+        if (popup && popup.parentNode) {
+            popup.parentNode.removeChild(popup);
+            popup = null;
+        }
+
+        // Disconnect observers
+        if (autoCleanupObserver) {
+            autoCleanupObserver.disconnect();
+            autoCleanupObserver = null;
+        }
+
+        if (containerObserver) {
+            containerObserver.disconnect();
+            containerObserver = null;
+        }
+
+        if (bodyObserver) {
+            bodyObserver.disconnect();
+            bodyObserver = null;
+        }
+
+        // Reset variables
+        currentStatusFilter = null;
+        currentTypeFilter = null;
+        currentDateFilter = null;
+        currentDateRangeEnd = null;
+        editsContainer = null;
+        btnContainer = null;
+        typeContainer = null;
+        dateContainer = null;
+        statsDiv = null;
+        autoLoadEnabled = false;
+        scrollContainer = null;
+
+        // Clear maps
+        shownStatuses.clear();
+        shownTypes.clear();
+
+        // Reset initialization flags
+        isInit = false;
+
+        // Remove edit numbers from any remaining elements
+        document.querySelectorAll('.edit-number').forEach(el => el.remove());
+
+        console.log('UI deinitialized successfully');
+    }
+
+    // Toggle auto load on/off
+    function toggleAutoLoad() {
+        autoLoadEnabled = !autoLoadEnabled;
+
+        if (autoLoadEnabled && scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+
+        // Update toggle button text and color
+        const autoLoadBtn = document.querySelector('.toggle-autoload-btn');
+        if (autoLoadBtn) {
+            autoLoadBtn.textContent = autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load';
+            autoLoadBtn.style.backgroundColor = autoLoadEnabled ? '#ea4335' : '#34a853';
+        }
+    }
 
     // Helper function to parse date from edit text
     function parseEditDate(dateText) {
         if (!dateText) return null;
-        
+
         const now = new Date();
         let editDate;
-        
+
         // Handle "Submitted [Month] [Day]" format (e.g., "Submitted Aug 7")
         if (dateText.includes('Submitted')) {
             const submittedMatch = dateText.match(/Submitted\s+([A-Za-z]+)\s+(\d+)/i);
@@ -132,21 +430,23 @@
                 const monthStr = submittedMatch[1];
                 const day = parseInt(submittedMatch[2]);
                 const currentYear = now.getFullYear();
-                
+
                 // Parse the month name to get month index
                 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+                ];
                 const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                                      'July', 'August', 'September', 'October', 'November', 'December'];
-                
+                    'July', 'August', 'September', 'October', 'November', 'December'
+                ];
+
                 let monthIndex = monthNames.findIndex(m => monthStr.toLowerCase().startsWith(m.toLowerCase()));
                 if (monthIndex === -1) {
                     monthIndex = fullMonthNames.findIndex(m => monthStr.toLowerCase() === m.toLowerCase());
                 }
-                
+
                 if (monthIndex !== -1) {
                     editDate = new Date(currentYear, monthIndex, day);
-                    
+
                     // If the date is in the future, assume it's from last year
                     if (editDate > now) {
                         editDate.setFullYear(currentYear - 1);
@@ -161,7 +461,7 @@
                 const amount = parseInt(match[1]);
                 const unit = match[2].toLowerCase();
                 editDate = new Date(now);
-                
+
                 switch (unit) {
                     case 'day':
                         editDate.setDate(editDate.getDate() - amount);
@@ -177,37 +477,39 @@
                         break;
                 }
             }
-        } 
+        }
         // Handle "today", "yesterday" text
         else if (dateText.toLowerCase().includes('today')) {
             editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        }
-        else if (dateText.toLowerCase().includes('yesterday')) {
+        } else if (dateText.toLowerCase().includes('yesterday')) {
             editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             editDate.setDate(editDate.getDate() - 1);
-        }
-        else {
+        } else {
             // Try to parse absolute dates
             editDate = new Date(dateText);
             if (isNaN(editDate.getTime())) {
                 return null;
             }
         }
-        
+
         return editDate && !isNaN(editDate.getTime()) ? editDate : null;
     }
 
     // Helper function to get date range of available edits
     function getEditDateRange() {
-        if (!editsContainer) return { min: null, max: null, hasEdits: false };
-        
+        if (!editsContainer) return {
+            min: null,
+            max: null,
+            hasEdits: false
+        };
+
         const editItems = Array.from(editsContainer.children);
         const dates = [];
-        
+
         editItems.forEach(item => {
             // Skip items that are still loading
             if (isEditItemLoading(item)) return;
-            
+
             const dateElement = item.querySelector('.fontBodySmall.eYfez');
             if (dateElement) {
                 const dateText = dateElement.textContent.trim();
@@ -217,11 +519,15 @@
                 }
             }
         });
-        
+
         if (dates.length === 0) {
-            return { min: null, max: null, hasEdits: false };
+            return {
+                min: null,
+                max: null,
+                hasEdits: false
+            };
         }
-        
+
         const sortedDates = dates.sort((a, b) => a - b);
         return {
             min: sortedDates[0],
@@ -236,29 +542,29 @@
         const endDateInput = dateContainer.querySelector('input[type="date"]:last-of-type');
         const quickDateButtons = dateContainer.querySelectorAll('.quick-date-btn');
         const clearBtn = dateContainer.querySelector('.clear-date-btn');
-        
+
         if (!startDateInput || !endDateInput) return;
-        
+
         const dateRange = getEditDateRange();
         const today = new Date();
         const todayStr = today.toISOString().split('T')[0];
-        
+
         // Set max date to today for both inputs
         startDateInput.max = todayStr;
         endDateInput.max = todayStr;
-        
+
         if (dateRange.hasEdits) {
             // Set min date to earliest edit date
             const minDateStr = dateRange.min.toISOString().split('T')[0];
             startDateInput.min = minDateStr;
             endDateInput.min = minDateStr;
-            
+
             // Enable inputs and buttons
             startDateInput.disabled = false;
             endDateInput.disabled = false;
             quickDateButtons.forEach(btn => btn.disabled = false);
             clearBtn.disabled = currentDateFilter === null;
-            
+
             // Update placeholder text
             startDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
             endDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
@@ -270,10 +576,40 @@
             endDateInput.value = '';
             quickDateButtons.forEach(btn => btn.disabled = true);
             clearBtn.disabled = true;
-            
+
             // Update placeholder text
             startDateInput.title = 'No edits available for date filtering';
             endDateInput.title = 'No edits available for date filtering';
+        }
+    }
+
+    // Helper function to update go-to-edit input constraints
+    function updateGoToEditConstraints() {
+        const goToInput = popup?.querySelector('.go-to-edit-input');
+        const goToBtn = popup?.querySelector('.go-to-edit-btn');
+
+        if (!goToInput || !goToBtn || !editsContainer) return;
+
+        const visibleItems = Array.from(editsContainer.children).filter(item =>
+            getComputedStyle(item).display !== 'none'
+        );
+
+        const maxNumber = visibleItems.length;
+
+        if (maxNumber === 0) {
+            goToInput.disabled = true;
+            goToBtn.disabled = true;
+            goToInput.placeholder = 'No edits available';
+            goToInput.title = 'No edits available to navigate to';
+        } else {
+            goToInput.disabled = false;
+            goToBtn.disabled = !numberingEnabled;
+            goToInput.placeholder = `1-${maxNumber}`;
+            goToInput.title = numberingEnabled ?
+                `Enter edit number between 1 and ${maxNumber}` :
+                'Enable edit numbering to use this feature';
+            goToInput.max = maxNumber;
+            goToInput.min = 1;
         }
     }
 
@@ -283,34 +619,34 @@
         const dateElement = item.querySelector('.fontBodySmall.eYfez');
         const titleElement = item.querySelector('.fontTitleLarge.HYVdIf');
         const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-        
+
         // If key elements are missing or empty, consider it still loading
         if (!dateElement || !titleElement || !typeElement) return true;
         if (!dateElement.textContent.trim() || !titleElement.textContent.trim() || !typeElement.textContent.trim()) return true;
-        
+
         // Check for loading indicators or placeholder text
         const dateText = dateElement.textContent.trim();
         const titleText = titleElement.textContent.trim();
-        
-        if (dateText.includes('Loading') || titleText.includes('Loading') || 
+
+        if (dateText.includes('Loading') || titleText.includes('Loading') ||
             dateText === '...' || titleText === '...') return true;
-        
+
         return false;
     }
 
     // Helper function to check if edit date is in selected range
     function isDateInRange(dateText) {
         if (!currentDateFilter) return true;
-        
+
         // If date text is empty or not yet loaded, don't filter it out
         if (!dateText || dateText.trim() === '') return true;
-        
+
         const editDate = parseEditDate(dateText);
         if (!editDate) return true; // Include items we can't parse or that haven't loaded yet
-        
+
         const editDateOnly = new Date(editDate.getFullYear(), editDate.getMonth(), editDate.getDate());
         const filterDateOnly = new Date(currentDateFilter.getFullYear(), currentDateFilter.getMonth(), currentDateFilter.getDate());
-        
+
         if (currentDateRangeEnd) {
             // Range filtering
             const endDateOnly = new Date(currentDateRangeEnd.getFullYear(), currentDateRangeEnd.getMonth(), currentDateRangeEnd.getDate());
@@ -325,21 +661,21 @@
     function addEditNumbering() {
         const PANE_SELECTOR = '.EhpEb';
         document.querySelectorAll(PANE_SELECTOR).forEach((item, index) => {
-            const wrap = item.querySelector('.Jo6p1e');
+            const wrap = item.querySelector('.qjoALb');
             if (!wrap) return;
-            
+
             // Remove existing number if present
             const existingNumber = wrap.querySelector('.edit-number');
             if (existingNumber) {
                 existingNumber.remove();
             }
-            
+
             // Add new number only if numbering is enabled
             if (numberingEnabled) {
                 const numberElement = document.createElement('div');
                 numberElement.className = 'edit-number';
                 numberElement.textContent = index + 1;
-                wrap.appendChild(numberElement);
+                wrap.insertBefore(numberElement, wrap.children[0]);
             }
         });
     }
@@ -350,13 +686,14 @@
         const SYMBOL_SELECTOR = '.MaIKSd.google-symbols.G47vBd';
         const PANE_SELECTOR = '.EhpEb'
         const EDIT_NAME_SELECTOR = '.fontTitleLarge.HYVdIf'
-        const observer = new MutationObserver(() => {
+        autoCleanupObserver = new MutationObserver(() => {
             cleanPanes();
             removeSymbolParents();
             replaceSpecificEdit();
             addColorStrip();
             addTooltipToEditName();
             addEditNumberingLocal();
+            makeImagesSquare();
         });
 
         // remove first child of each .eYfez pane
@@ -367,18 +704,25 @@
             });
         }
 
+        function makeImagesSquare() {
+            Array.from(document.getElementsByClassName("PInAKb")).forEach((e) => {
+                let squareBgImage = e.style.backgroundImage.split("-br100").join("");
+                e.style.backgroundImage = squareBgImage;
+            });
+        }
+
         // remove the parent of any matching symbol element
         function removeSymbolParents() {
             document.querySelectorAll(SYMBOL_SELECTOR).forEach(el => {
                 const p = el.parentElement;
                 if (p) {
-                    p.remove();
+                    p.style = "display: none !important;";
                 }
             });
         }
 
         function replaceSpecificEdit() {
-            observer.disconnect();
+            autoCleanupObserver.disconnect();
             document.querySelectorAll(PANE_SELECTOR).forEach(item => {
                 const mediumEl = item.querySelector(
                     '.fontBodyMedium.JjQyvd.TqOXoe'
@@ -391,14 +735,14 @@
                     smallEl.textContent = texts.join(', ');
                 }
             });
-            observer.observe(document.body, {
+            autoCleanupObserver.observe(document.body, {
                 childList: true,
                 subtree: true
             });
         }
 
         function addColorStrip() {
-            observer.disconnect();
+            autoCleanupObserver.disconnect();
             document.querySelectorAll(PANE_SELECTOR).forEach(item => {
                 const wrap = item.querySelector('.Jo6p1e');
                 if (!wrap) return;
@@ -412,27 +756,27 @@
                     wrap.style.borderLeft = '';
                 }
             });
-            observer.observe(document.body, {
+            autoCleanupObserver.observe(document.body, {
                 childList: true,
                 subtree: true
             });
         }
 
         function addTooltipToEditName() {
-            observer.disconnect();
+            autoCleanupObserver.disconnect();
             document.querySelectorAll(EDIT_NAME_SELECTOR).forEach(item => {
                 item.title = "Go to map edit";
             });
-            observer.observe(document.body, {
+            autoCleanupObserver.observe(document.body, {
                 childList: true,
                 subtree: true
             });
         }
 
         function addEditNumberingLocal() {
-            observer.disconnect();
+            autoCleanupObserver.disconnect();
             addEditNumbering();
-            observer.observe(document.body, {
+            autoCleanupObserver.observe(document.body, {
                 childList: true,
                 subtree: true
             });
@@ -446,7 +790,7 @@
         addColorStrip();
         addTooltipToEditName();
         addEditNumberingLocal();
-        observer.observe(document.body, {
+        autoCleanupObserver.observe(document.body, {
             childList: true,
             subtree: true
         });
@@ -455,14 +799,14 @@
     // Update edit numbering based on visible items
     function updateEditNumbering() {
         if (!editsContainer || !numberingEnabled) return;
-        
+
         const allItems = Array.from(editsContainer.children);
         let visibleIndex = 1;
-        
+
         allItems.forEach(item => {
-            const wrap = item.querySelector('.Jo6p1e');
+            const wrap = item.querySelector('.qjoALb');
             const numberElement = wrap?.querySelector('.edit-number');
-            
+
             if (getComputedStyle(item).display !== 'none') {
                 // Item is visible, update number
                 if (numberElement) {
@@ -482,7 +826,8 @@
     // Toggle edit numbering on/off
     function toggleEditNumbering() {
         numberingEnabled = !numberingEnabled;
-        
+        saveNumberingPreference(); // Save to localStorage
+
         if (numberingEnabled) {
             // Show all existing numbers
             document.querySelectorAll('.edit-number').forEach(numberEl => {
@@ -497,22 +842,32 @@
                 numberEl.classList.add('hidden');
             });
         }
-        
+
         // Update toggle button text
         const toggleBtn = document.querySelector('.toggle-numbering-btn');
         if (toggleBtn) {
             toggleBtn.textContent = numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
             toggleBtn.style.backgroundColor = numberingEnabled ? '#ea4335' : '#34a853';
         }
+
+        // Update go-to-edit constraints
+        updateGoToEditConstraints();
     }
 
     // --- filterEdits() ---
     function filterEdits() {
-        const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
-        scrollContainer.scrollTop = 0;
-        if (!edits) return;
+        if (!editsContainer) return;
 
-        Array.from(edits.children).forEach(item => {
+        // Find scroll container if not found yet
+        if (!scrollContainer) {
+            scrollContainer = findScrollContainer();
+        }
+
+        if (scrollContainer) {
+            scrollContainer.scrollTop = 0;
+        }
+
+        Array.from(editsContainer.children).forEach(item => {
             let visible = true;
 
             // If the item is still loading, always keep it visible to avoid premature filtering
@@ -566,7 +921,7 @@
 
             item.style.display = visible ? '' : 'none';
         });
-        
+
         // Update numbering after filtering
         updateEditNumbering();
     }
@@ -619,153 +974,140 @@
         });
     }
 
-    // find the nearest scrollable container
-    function getScrollContainer(el) {
-        let p = el;
-        while (p && p !== document.body) {
-            const style = getComputedStyle(p);
-            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                p.scrollHeight > p.clientHeight) {
-                return p;
-            }
-            p = p.parentElement;
-        }
-        return null;
-    }
-
     function updateButtonsAndStats() {
-  // find scroll container once
-  if (!scrollContainer) {
-    scrollContainer =
-      getScrollContainer(editsContainer) ||
-      document.querySelector(
-        '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde'
-      );
-  }
+        // find scroll container if not found yet
+        if (!scrollContainer) {
+            scrollContainer = findScrollContainer();
+        }
 
-  // grab only those items not hidden by filterEdits()
-  const visibleItems = Array.from(editsContainer.children)
-    .filter(item => getComputedStyle(item).display !== 'none');
+        // grab only those items not hidden by filterEdits()
+        const visibleItems = Array.from(editsContainer.children)
+            .filter(item => getComputedStyle(item).display !== 'none');
 
-  // --- STATUS COUNTS based on visibleItems ---
-  const sCounts = {};
-  STATUSES.forEach(s => { sCounts[s.name] = 0; });
-  visibleItems.forEach(item => {
-    STATUSES.forEach(s => {
-      if (item.querySelector(`.${s.className}`)) {
-        sCounts[s.name]++;
-      }
-    });
-  });
+        // --- STATUS COUNTS based on visibleItems ---
+        const sCounts = {};
+        STATUSES.forEach(s => {
+            sCounts[s.name] = 0;
+        });
+        visibleItems.forEach(item => {
+            STATUSES.forEach(s => {
+                if (item.querySelector(`.${s.className}`)) {
+                    sCounts[s.name]++;
+                }
+            });
+        });
 
-  const total = Object.values(sCounts).reduce((a, b) => a + b, 0);
-  statsDiv.textContent = `Total edits: ${total}`;
+        const total = Object.values(sCounts).reduce((a, b) => a + b, 0);
+        statsDiv.textContent = `Total edits: ${total}`;
 
-  // update/add/remove status buttons
-  STATUSES.forEach(s => {
-    const count = sCounts[s.name] || 0;
-    const present = count > 0;
+        // update/add/remove status buttons
+        STATUSES.forEach(s => {
+            const count = sCounts[s.name] || 0;
+            const present = count > 0;
 
-    if (present && !shownStatuses.has(s.name)) {
-      const btn = document.createElement('button');
-      btn.textContent = `${s.name} (${count})`;
-      Object.assign(btn.style, {
-        backgroundColor: s.color,
-        border: 'none',
-        borderRadius: '4px',
-        color: '#000',
-        padding: '6px 10px',
-        margin: '0 4px 4px 0',
-        cursor: 'pointer'
-      });
-      btn.addEventListener('click', () => {
-        currentStatusFilter =
-          currentStatusFilter === s.name ? null : s.name;
-        filterEdits();
-        updateButtonsAndStats();     // ← re-draw counts
-      });
-      shownStatuses.set(s.name, btn);
-      btnContainer.appendChild(btn);
+            if (present && !shownStatuses.has(s.name)) {
+                const btn = document.createElement('button');
+                btn.textContent = `${s.name} (${count})`;
+                Object.assign(btn.style, {
+                    backgroundColor: s.color,
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: '#ffffff',
+                    padding: '6px 10px',
+                    margin: '0 4px 4px 0',
+                    cursor: 'pointer'
+                });
+                btn.addEventListener('click', () => {
+                    currentStatusFilter =
+                        currentStatusFilter === s.name ? null : s.name;
+                    filterEdits();
+                    updateButtonsAndStats(); // ← re-draw counts
+                });
+                shownStatuses.set(s.name, btn);
+                btnContainer.appendChild(btn);
 
-    } else if (present && shownStatuses.has(s.name)) {
-      shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
+            } else if (present && shownStatuses.has(s.name)) {
+                shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
 
-    } else if (!present && shownStatuses.has(s.name)) {
-      const btn = shownStatuses.get(s.name);
-      btnContainer.removeChild(btn);
-      shownStatuses.delete(s.name);
-      if (currentStatusFilter === s.name) {
-        currentStatusFilter = null;
-        filterEdits();
-        updateButtonsAndStats();
-      }
+            } else if (!present && shownStatuses.has(s.name)) {
+                const btn = shownStatuses.get(s.name);
+                btnContainer.removeChild(btn);
+                shownStatuses.delete(s.name);
+                if (currentStatusFilter === s.name) {
+                    currentStatusFilter = null;
+                    filterEdits();
+                    updateButtonsAndStats();
+                }
+            }
+        });
+
+        // --- TYPE COUNTS based on visibleItems ---
+        const typeCounts = {};
+        visibleItems.forEach(item => {
+            const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+            if (!b) return;
+            b.textContent.split(',').forEach(part => {
+                const txt = part.trim();
+                if (!txt) return;
+                typeCounts[txt] = (typeCounts[txt] || 0) + 1;
+            });
+        });
+        Object.entries(typeCounts).forEach(([type, count]) => {
+            const present = count > 0;
+            if (present && !shownTypes.has(type)) {
+                const btn = document.createElement('button');
+                btn.textContent = `${type} (${count})`;
+                Object.assign(btn.style, {
+                    backgroundColor: 'lightgray',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: '#000',
+                    padding: '6px 10px',
+                    margin: '0 4px 4px 0',
+                    cursor: 'pointer'
+                });
+                btn.addEventListener('click', () => {
+                    currentTypeFilter = currentTypeFilter === type ? null : type;
+                    filterEdits();
+                    updateButtonsAndStats(); // ← re-draw counts
+                });
+                shownTypes.set(type, btn);
+                typeContainer.appendChild(btn);
+
+            } else if (present && shownTypes.has(type)) {
+                shownTypes.get(type).textContent = `${type} (${count})`;
+
+            } else if (!present && shownTypes.has(type)) {
+                const btn = shownTypes.get(type);
+                typeContainer.removeChild(btn);
+                shownTypes.delete(type);
+                if (currentTypeFilter === type) {
+                    currentTypeFilter = null;
+                    filterEdits();
+                    updateButtonsAndStats();
+                }
+            }
+        });
+
+        // Update date filter display
+        updateDateFilterDisplay();
+
+        // Update date input constraints based on available edits
+        updateDateInputConstraints();
+
+        // Update go-to-edit constraints
+        updateGoToEditConstraints();
+
+        // Update edit numbering
+        updateEditNumbering();
+
+        // auto-scroll if needed
+        if (autoLoadEnabled && scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+
+        updateActiveButtons();
     }
-  });
-
-  // --- TYPE COUNTS based on visibleItems ---
-  const typeCounts = {};
-  visibleItems.forEach(item => {
-    const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-    if (!b) return;
-    b.textContent.split(',').forEach(part => {
-      const txt = part.trim();
-      if (!txt) return;
-      typeCounts[txt] = (typeCounts[txt] || 0) + 1;
-    });
-  });
-  Object.entries(typeCounts).forEach(([type, count]) => {
-    const present = count > 0;
-    if (present && !shownTypes.has(type)) {
-      const btn = document.createElement('button');
-      btn.textContent = `${type} (${count})`;
-      Object.assign(btn.style, {
-        backgroundColor: 'lightgray',
-        border: 'none',
-        borderRadius: '4px',
-        color: '#000',
-        padding: '6px 10px',
-        margin: '0 4px 4px 0',
-        cursor: 'pointer'
-      });
-      btn.addEventListener('click', () => {
-        currentTypeFilter = currentTypeFilter === type ? null : type;
-        filterEdits();
-        updateButtonsAndStats();   // ← re-draw counts
-      });
-      shownTypes.set(type, btn);
-      typeContainer.appendChild(btn);
-
-    } else if (present && shownTypes.has(type)) {
-      shownTypes.get(type).textContent = `${type} (${count})`;
-
-    } else if (!present && shownTypes.has(type)) {
-      const btn = shownTypes.get(type);
-      typeContainer.removeChild(btn);
-      shownTypes.delete(type);
-      if (currentTypeFilter === type) {
-        currentTypeFilter = null;
-        filterEdits();
-        updateButtonsAndStats();
-      }
-    }
-  });
-
-  // Update date filter display
-  updateDateFilterDisplay();
-
-  // Update date input constraints based on available edits
-  updateDateInputConstraints();
-
-  // Update edit numbering
-  updateEditNumbering();
-
-  // auto-scroll if needed
-  if (autoLoadEnabled && scrollContainer) {
-    scrollContainer.scrollTop = scrollContainer.scrollHeight;
-  }
-
-  updateActiveButtons();
-}
 
     // Update date filter display
     function updateDateFilterDisplay() {
@@ -814,38 +1156,18 @@
             width: '280px'
         });
 
-        // header / drag handle
-        const header = document.createElement('div');
-        header.textContent = 'Filter edits by status:';
-        header.classList.add('drag-handle');
-        header.style.marginBottom = '8px';
-        popup.appendChild(header);
-
         // stats
         statsDiv = document.createElement('div');
         statsDiv.textContent = 'Total edits: 0';
+        statsDiv.classList.add('drag-handle');
         statsDiv.style.marginBottom = '8px';
         popup.appendChild(statsDiv);
 
-        // auto-load
-        const autoLoadDiv = document.createElement('div');
-        autoLoadDiv.style.marginBottom = '8px';
-        const chk = document.createElement('input');
-        chk.type = 'checkbox';
-        chk.id = 'gmee-auto-load';
-        const lbl = document.createElement('label');
-        lbl.htmlFor = 'gmee-auto-load';
-        lbl.textContent = 'Auto load all edits';
-        lbl.style.marginLeft = '4px';
-        autoLoadDiv.appendChild(chk);
-        autoLoadDiv.appendChild(lbl);
-        popup.appendChild(autoLoadDiv);
-        chk.addEventListener('change', () => {
-            autoLoadEnabled = chk.checked;
-            if (autoLoadEnabled && scrollContainer) {
-                scrollContainer.scrollTop = scrollContainer.scrollHeight;
-            }
-        });
+        // header / drag handle
+        const header = document.createElement('div');
+        header.textContent = 'Filter edits by status:';
+        header.style.marginBottom = '8px';
+        popup.appendChild(header);
 
         // status buttons container
         btnContainer = document.createElement('div');
@@ -867,7 +1189,7 @@
         popup.appendChild(dateHeader);
 
         dateContainer = document.createElement('div');
-        
+
         // Date status display
         const dateStatus = document.createElement('div');
         dateStatus.className = 'date-status';
@@ -902,14 +1224,14 @@
                 const selectedDate = new Date(startDateInput.value + 'T00:00:00');
                 const today = new Date();
                 today.setHours(23, 59, 59, 999); // End of today
-                
+
                 // Validate date is not in the future
                 if (selectedDate > today) {
                     alert('Cannot select a future date');
                     startDateInput.value = '';
                     return;
                 }
-                
+
                 // Validate date is within available edit range
                 const dateRange = getEditDateRange();
                 if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
@@ -917,7 +1239,7 @@
                     startDateInput.value = '';
                     return;
                 }
-                
+
                 currentDateFilter = selectedDate;
                 // If end date is set and start > end, clear end date
                 if (currentDateRangeEnd && currentDateFilter > currentDateRangeEnd) {
@@ -949,14 +1271,14 @@
                 const selectedDate = new Date(endDateInput.value + 'T23:59:59');
                 const today = new Date();
                 today.setHours(23, 59, 59, 999); // End of today
-                
+
                 // Validate date is not in the future
                 if (selectedDate > today) {
                     alert('Cannot select a future date');
                     endDateInput.value = '';
                     return;
                 }
-                
+
                 // Validate date is within available edit range
                 const dateRange = getEditDateRange();
                 if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
@@ -964,7 +1286,7 @@
                     endDateInput.value = '';
                     return;
                 }
-                
+
                 if (currentDateFilter && selectedDate >= currentDateFilter) {
                     currentDateRangeEnd = selectedDate;
                 } else if (!currentDateFilter) {
@@ -991,7 +1313,7 @@
         const startLabel = document.createElement('label');
         startLabel.textContent = 'Start date:';
         startLabel.style.fontSize = '12px';
-        
+
         const endLabel = document.createElement('label');
         endLabel.textContent = 'End date (optional):';
         endLabel.style.fontSize = '12px';
@@ -1010,14 +1332,28 @@
             margin-bottom: 8px;
         `;
 
-        const quickDates = [
-            { name: 'Today', days: 0 },
-            { name: 'Yesterday', days: 1 },
-            { name: 'Last 7 days', days: 7 },
-            { name: 'Last 30 days', days: 30 }
+        const quickDates = [{
+                name: 'Today',
+                days: 0
+            },
+            {
+                name: 'Yesterday',
+                days: 1
+            },
+            {
+                name: 'Last 7 days',
+                days: 7
+            },
+            {
+                name: 'Last 30 days',
+                days: 30
+            }
         ];
 
-        quickDates.forEach(({ name, days }) => {
+        quickDates.forEach(({
+            name,
+            days
+        }) => {
             const btn = document.createElement('button');
             btn.textContent = name;
             btn.className = 'quick-date-btn';
@@ -1037,7 +1373,7 @@
                     alert('No edits available for date filtering');
                     return;
                 }
-                
+
                 const now = new Date();
                 if (days === 0) {
                     // Today only - check if we have edits for today
@@ -1054,18 +1390,18 @@
                     // Range from X days ago to today
                     let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
                     const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                    
+
                     // Adjust start date if it's before our earliest edit
                     if (startDate < dateRange.min) {
                         startDate = dateRange.min;
                     }
-                    
+
                     // Check if the range contains any edits
                     if (startDate > dateRange.max) {
                         alert(`No edits available in the last ${days} days`);
                         return;
                     }
-                    
+
                     currentDateFilter = startDate;
                     currentDateRangeEnd = endDate;
                     startDateInput.value = startDate.toISOString().split('T')[0];
@@ -1102,9 +1438,48 @@
         dateContainer.appendChild(clearBtn);
         popup.appendChild(dateContainer);
 
+        // Go to edit number section
+        const goToEditHeader = document.createElement('div');
+        goToEditHeader.textContent = 'Go to edit number:';
+        goToEditHeader.style.margin = '8px 0 4px';
+        popup.appendChild(goToEditHeader);
+
+        const goToEditContainer = document.createElement('div');
+        goToEditContainer.className = 'go-to-edit-container';
+
+        const goToEditInput = document.createElement('input');
+        goToEditInput.type = 'number';
+        goToEditInput.className = 'go-to-edit-input';
+        goToEditInput.placeholder = 'Edit #';
+        goToEditInput.min = 1;
+        goToEditInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const targetNumber = parseInt(goToEditInput.value);
+                if (targetNumber) {
+                    goToEditNumber(targetNumber);
+                    goToEditInput.value = '';
+                }
+            }
+        });
+
+        const goToEditBtn = document.createElement('button');
+        goToEditBtn.textContent = 'Go';
+        goToEditBtn.className = 'go-to-edit-btn';
+        goToEditBtn.addEventListener('click', () => {
+            const targetNumber = parseInt(goToEditInput.value);
+            if (targetNumber) {
+                goToEditNumber(targetNumber);
+                goToEditInput.value = '';
+            }
+        });
+
+        goToEditContainer.appendChild(goToEditInput);
+        goToEditContainer.appendChild(goToEditBtn);
+        popup.appendChild(goToEditContainer);
+
         // Edit numbering controls
         const numberingHeader = document.createElement('div');
-        numberingHeader.textContent = 'Display options:';
+        numberingHeader.textContent = 'Options: ';
         numberingHeader.style.margin = '8px 0 4px';
         popup.appendChild(numberingHeader);
 
@@ -1126,48 +1501,137 @@
         `;
         toggleBtn.addEventListener('click', toggleEditNumbering);
 
+        // auto-load button
+
+        const autoLoadBtn = document.createElement('button');
+        autoLoadBtn.textContent = autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load';
+        autoLoadBtn.className = 'toggle-autoload-btn';
+        autoLoadBtn.style.cssText = `
+            background: ${autoLoadEnabled ? '#ea4335' : '#34a853'};
+            border: none;
+            border-radius: 4px;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 8px;
+        `;
+        autoLoadBtn.addEventListener('click', toggleAutoLoad);
+
+        numberingContainer.appendChild(autoLoadBtn);
         numberingContainer.appendChild(toggleBtn);
+
         popup.appendChild(numberingContainer);
 
         document.body.appendChild(popup);
         makeDraggable(popup, '.drag-handle');
     }
 
-    // wait for the edits list to appear, then hook it
+    // Updated function to watch for container with better retry logic
     function watchForContainer() {
-  function trySetup() {
-    const edits = document.getElementsByClassName('m6QErb XiKgde')[3];
-    if (!edits) return false;
-    editsContainer = edits;              // grab it here
-    updateButtonsAndStats();
-    if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
-      filterEdits();
+        let retryCount = 0;
+        const maxRetries = 30; // Try for 30 seconds
+        const retryDelay = 1000; // 1 second intervals
+
+        function trySetup() {
+            console.log(`Attempting to find edits container (attempt ${retryCount + 1}/${maxRetries})`);
+
+            const edits = findEditsContainer();
+            if (!edits) {
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    setTimeout(trySetup, retryDelay);
+                } else {
+                    console.warn('Could not find edits container after maximum retries');
+                }
+                return false;
+            }
+
+            console.log('Found edits container:', edits);
+            editsContainer = edits;
+
+            // Find scroll container
+            scrollContainer = findScrollContainer();
+            if (scrollContainer) {
+                console.log('Found scroll container:', scrollContainer);
+            }
+
+            updateButtonsAndStats();
+            if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
+                filterEdits();
+            }
+
+            containerObserver = new MutationObserver(() => {
+                updateButtonsAndStats();
+                if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
+                    filterEdits();
+                }
+            });
+            containerObserver.observe(editsContainer, {
+                childList: true
+            });
+            return true;
+        }
+
+        trySetup();
     }
-    new MutationObserver(() => {
-      updateButtonsAndStats();
-      if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
-        filterEdits();
-      }
-    }).observe(editsContainer, { childList: true });
-    return true;
-  }
-  if (!trySetup()) {
-    const bodyObs = new MutationObserver((_, obs) => {
-      if (trySetup()) obs.disconnect();
+
+    function waitForElementAndClick(className, index = 0) {
+        const checkForElement = () => {
+            const elements = document.getElementsByClassName(className);
+
+            if (elements.length > index) {
+                elements[index].click();
+                console.log(`Clicked element: ${className}[${index}]`);
+                return;
+            }
+
+            setTimeout(checkForElement, 1000); // Check again in 1 second
+        };
+
+        checkForElement();
+    }
+
+    function checkInitState() {
+        if (window.location.href.includes("/contrib/") && !window.location.href.includes("/photos/") && !window.location.href.includes("/answers/") && !window.location.href.includes("/reviews/") && !window.location.href.includes("/contribute/")) {
+            if (isInit === false) {
+                console.log('Initializing Google Maps Enhanced Edits UI');
+                isInit = true;
+                createPopup();
+                setupAutoCleanup();
+                watchForContainer();
+            }
+        } else {
+            // Not on edits page anymore, deinitialize
+            if (isInit === true) {
+                deinitializeEditsUI();
+            }
+        }
+
+        if (isEventHandlersInit === false) {
+            isEventHandlersInit = true;
+            waitForElementAndClick("okDpye PpaGLb", 1);
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded",function() {
+        var bodyList = document.querySelector('body');
+
+        var observer = new MutationObserver(function(mutations) {
+            if (oldHref != document.location.href) {
+                oldHref = document.location.href;
+                checkInitState();
+            }
+        });
+
+        var config = {
+            childList: true,
+            subtree: true
+        };
+
+        observer.observe(bodyList, config);
+        // Check on window load
+        checkInitState();
     });
-    bodyObs.observe(document.body, { childList: true, subtree: true });
-  }
-}
-
-    function init() {
-        createPopup();
-        setupAutoCleanup();
-        watchForContainer();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
 })();
