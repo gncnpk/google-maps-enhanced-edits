@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Maps Enhanced Edits
 // @namespace    https://github.com/gncnpk/google-maps-enhanced-edits
-// @version      0.0.15
+// @version      0.0.16
 // @description  Adds quality of life tweaks to the editing experience in Google Maps.
 // @author       Gavin Canon-Phratsachack (https://github.com/gncnpk)
 // @match        https://www.google.com/maps/*
@@ -16,160 +16,28 @@
 (function() {
     'use strict';
 
-    let isInit = false;
-    let isEventHandlersInit = false;
-    let oldHref = document.location.href;
+    // Constants
+    const CONFIG = {
+        STORAGE_KEY_NUMBERING: 'gmee-numbering-enabled',
+        STORAGE_KEY_PERFORMANCE: 'gmee-performance-mode',
+        MAX_RETRIES: 30,
+        RETRY_DELAY: 1000,
+        DEBOUNCE_DELAY: 100,
+        HIGHLIGHT_DURATION: 3000
+    };
 
-    // Store observers for cleanup
-    let autoCleanupObserver = null;
-    let containerObserver = null;
-    let bodyObserver = null;
+    const SELECTORS = {
+        EDIT_ITEM: '.EhpEb',
+        EDIT_CONTAINER: '.m6QErb.XiKgde',
+        EDIT_WRAP: '.qjoALb',
+        DATE_ELEMENT: '.fontBodySmall.eYfez',
+        TITLE_ELEMENT: '.fontTitleLarge.HYVdIf',
+        STATUS_ELEMENTS: '.BjkJBb',
+        CLEAN_SELECTOR: '.eYfez',
+        SYMBOL_SELECTOR: '.MaIKSd.google-symbols.G47vBd',
+        EDIT_NAME_SELECTOR: '.fontTitleLarge.HYVdIf'
+    };
 
-    // inject a global CSS rule
-    const style = document.createElement('style');
-    style.textContent = `
-    .qjoALb {
-      margin-bottom: 0 !important;
-    }
-    .n6N0W {
-      margin-bottom: 0 !important;
-    }
-    .zOQ8Le {
-      margin-bottom: 4px !important;
-    }
-    .BjkJBb {
-      margin: 6px !important;
-    }
-    .JjQyvd {
-      margin: 0 8px 10px !important;
-    }
-    .mOLNZc {
-      padding-top: 10px !important;
-    }
-    .Jo6p1e {
-      padding: 10px !important;
-    }
-    .uLTO2d {
-      margin: 8px !important;
-    }
-    .fontTitleLarge.HYVdIf:hover {
-      text-decoration: underline;
-    }
-    /* Date filter disabled states */
-    .quick-date-btn:disabled,
-    .clear-date-btn:disabled {
-      background: #e0e0e0 !important;
-      color: #999 !important;
-      cursor: not-allowed !important;
-      border-color: #ccc !important;
-    }
-    input[type="date"]:disabled {
-      background: #f5f5f5 !important;
-      color: #999 !important;
-      cursor: not-allowed !important;
-    }
-    /* Edit numbering styles */
-    .edit-number {
-      position: relative;
-      margin-top: auto;
-      margin-bottom: auto;
-      margin-right: 5px;
-      background: #4285f4;
-      color: white;
-      font-size: 12px;
-      font-weight: bold;
-      width: 24px;
-      height: 24px;
-      border-radius: 0%;
-      z-index: 10;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 24px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-      transition: all 0.3s ease;
-    }
-    .edit-number.hidden {
-      display: none !important;
-    }
-    .edit-number.highlight {
-      background: #ea4335 !important;
-      transform: scale(1.2);
-      box-shadow: 0 0 15px rgba(234, 67, 53, 0.8);
-    }
-    .Jo6p1e {
-      position: relative !important;
-    }
-    .m6QErb.XiKgde.ecceSd.JoFlEe {
-      width: auto !important;
-    }
-    .YWlkcf.fVTiyc {
-      margin-top: auto !important;
-      margin-bottom: auto !important;
-    }
-    .PInAKb {
-      border-radius: 0% !important;
-      margin-right: 5px !important;
-    }
-    /* Go to edit number styles */
-    .go-to-edit-container {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .go-to-edit-input {
-      flex: 1;
-      padding: 4px 6px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 12px;
-    }
-    .go-to-edit-btn {
-      background: #4285f4;
-      border: none;
-      border-radius: 4px;
-      color: white;
-      padding: 4px 8px;
-      font-size: 12px;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    .go-to-edit-btn:hover {
-      background: #3367d6;
-    }
-    .go-to-edit-btn:disabled {
-      background: #e0e0e0;
-      color: #999;
-      cursor: not-allowed;
-    }
-  `;
-    document.head.appendChild(style);
-
-    // current filters
-    let currentStatusFilter = null;
-    let currentTypeFilter = null;
-    let currentDateFilter = null; // Date object or null
-    let currentDateRangeEnd = null; // Date object for range end or null
-    let editsContainer = null;
-
-    // DOM & state - Load numbering preference from localStorage
-    let popup, btnContainer, typeContainer, dateContainer, statsDiv;
-    let autoLoadEnabled = false;
-    let numberingEnabled = localStorage.getItem('gmee-numbering-enabled') !== 'false'; // Default to true, false only if explicitly set
-    let scrollContainer = null;
-    const shownStatuses = new Map();
-    const shownTypes = new Map();
-
-    // LocalStorage key for user preferences
-    const STORAGE_KEY = 'gmee-numbering-enabled';
-
-    // Function to save numbering preference
-    function saveNumberingPreference() {
-        localStorage.setItem(STORAGE_KEY, numberingEnabled.toString());
-    }
-
-    // Replace your old STATUSES definition with this:
     const STATUSES = [{
             name: 'Accepted',
             className: 'cLk0Bb',
@@ -192,275 +60,1149 @@
         }
     ];
 
-    // Improved function to find edits container with multiple strategies
-    function findEditsContainer() {
-        // Strategy 1: Look for containers with edit items (.EhpEb class)
-        const editItems = document.querySelectorAll('.EhpEb');
-        if (editItems.length > 0) {
-            // Find the common parent container
-            let container = editItems[0].parentElement;
-            while (container && container.children.length < editItems.length) {
-                container = container.parentElement;
-            }
-            if (container && container.children.length >= editItems.length) {
-                return container;
-            }
+    // Utility functions
+    const debounce = (func, delay) => {
+        let timeoutId;
+        return (...args) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => func.apply(this, args), delay);
+        };
+    };
+
+    const createElement = (tag, className, styles = {}, textContent = '') => {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        Object.assign(element.style, styles);
+        if (textContent) element.textContent = textContent;
+        return element;
+    };
+
+    // Enhanced Edits Manager
+    class GoogleMapsEnhancedEdits {
+        constructor() {
+            this.state = {
+                isInit: false,
+                isEventHandlersInit: false,
+                oldHref: document.location.href,
+                numberingEnabled: localStorage.getItem(CONFIG.STORAGE_KEY_NUMBERING) !== 'false',
+                performanceMode: localStorage.getItem(CONFIG.STORAGE_KEY_PERFORMANCE) === 'true',
+                performanceModeBeforeAutoLoad: undefined,
+                autoLoadEnabled: false,
+                currentStatusFilter: null,
+                currentTypeFilter: null,
+                currentDateFilter: null,
+                currentDateRangeEnd: null
+            };
+
+            this.elements = {
+                popup: null,
+                editsContainer: null,
+                scrollContainer: null,
+                statusList: null,
+                typeList: null,
+                dateContainer: null,
+                statsDiv: null
+            };
+
+            this.observers = {
+                main: null,
+                container: null,
+                autoCleanup: null
+            };
+
+            this.collections = {
+                shownStatuses: new Map(),
+                shownTypes: new Map()
+            };
+
+            this.debouncedUpdate = debounce(() => this.updateButtonsAndStats(), CONFIG.DEBOUNCE_DELAY);
+            this.debouncedFilter = debounce(() => this.filterEdits(), CONFIG.DEBOUNCE_DELAY);
+            this.debouncedNumbering = debounce(() => this.updateEditNumbering(), CONFIG.DEBOUNCE_DELAY);
+
+            this.init();
         }
 
-        // Strategy 2: Look for containers with multiple m6QErb XiKgde elements
-        const containers = Array.from(document.querySelectorAll('.m6QErb.XiKgde'))
-            .filter(el => {
-                const parent = el.parentElement;
-                return parent && Array.from(parent.children).filter(child =>
-                    child.classList.contains('m6QErb') && child.classList.contains('XiKgde')
-                ).length > 1;
-            });
+        init() {
+            this.injectStyles();
+            this.setupNavigationWatcher();
+            this.checkInitState();
+        }
 
-        if (containers.length > 0) {
-            // Find the container with the most edit-like items
-            let bestContainer = null;
-            let maxEditItems = 0;
+        injectStyles() {
+            // Always inject styles regardless of performance mode
+            const styles = `
+                /* Basic layout and spacing */
+                .qjoALb { margin-bottom: 0 !important; }
+                .n6N0W { margin-bottom: 0 !important; }
+                .zOQ8Le { margin-bottom: 4px !important; }
+                .BjkJBb { margin: 6px !important; }
+                .JjQyvd { margin: 0 8px 10px !important; }
+                .mOLNZc { padding-top: 10px !important; }
+                .Jo6p1e { padding: 10px !important; position: relative !important; }
+                .uLTO2d { margin: 8px !important; }
+                .fontTitleLarge.HYVdIf:hover { text-decoration: underline; }
+                .m6QErb.XiKgde.ecceSd.JoFlEe { width: auto !important; }
+                .YWlkcf.fVTiyc { margin-top: auto !important; margin-bottom: auto !important; }
+                .PInAKb { border-radius: 0% !important; margin-right: 5px !important; }
 
-            containers.forEach(container => {
-                const editCount = container.querySelectorAll('.EhpEb, .Jo6p1e').length;
-                if (editCount > maxEditItems) {
-                    maxEditItems = editCount;
-                    bestContainer = container;
+                /* CSS replacements for JS cleanup functions */
+
+                /* Replace removeSymbolParents() - Hide Google symbols */
+                .MaIKSd.google-symbols.G47vBd { display: none !important; }
+
+                /* Replace cleanPanes() - Hide first child of date elements */
+                .fontBodySmall.eYfez > *:first-child { display: none !important; }
+
+                /* Replace addColorStrip() - Add colored borders based on status */
+                .EhpEb:has(.cLk0Bb) .Jo6p1e { border-left: 10px solid #198639 !important; }
+                .EhpEb:has(.UgJ9Rc) .Jo6p1e { border-left: 10px solid #b26c00 !important; }
+                .EhpEb:has(.ehaAif) .Jo6p1e { border-left: 10px solid #dc362e !important; }
+                .EhpEb:has(.gZbGnf) .Jo6p1e { border-left: 10px solid #5e5e5e !important; }
+
+                /* Hide status indicators since we show them as colored borders */
+                .cLk0Bb, .UgJ9Rc, .ehaAif, .gZbGnf { display: none !important; }
+
+                /* Edit numbering styles */
+                .edit-number {
+                    position: relative; margin-top: auto; margin-bottom: auto; margin-right: 5px;
+                    background: #4285f4; color: white; font-size: 12px; font-weight: bold;
+                    width: 24px; height: 24px; border-radius: 0%; z-index: 10;
+                    display: flex; align-items: center; justify-content: center;
+                    min-width: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    transition: all 0.3s ease;
+                }
+                .edit-number.hidden { display: none !important; }
+                .edit-number.highlight {
+                    background: #ea4335 !important; transform: scale(1.2);
+                    box-shadow: 0 0 15px rgba(234, 67, 53, 0.8);
+                }
+
+                /* Filter list styles */
+                .filter-list {
+                    max-height: 120px; overflow-y: auto; border: 1px solid #e0e0e0;
+                    border-radius: 4px; margin-bottom: 8px; background: white;
+                }
+                .filter-list-item {
+                    padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #f0f0f0;
+                    font-size: 12px; display: flex; justify-content: space-between;
+                    align-items: center; transition: background-color 0.2s ease;
+                }
+                .filter-list-item:last-child { border-bottom: none; }
+                .filter-list-item:hover { background-color: #f5f5f5; }
+                .filter-list-item.active { background-color: #e3f2fd; border-left: 3px solid #2196f3; }
+                .filter-list-item .status-indicator {
+                    width: 12px; height: 12px; border-radius: 2px; margin-right: 6px;
+                }
+                .filter-list-item .count {
+                    background: #e0e0e0; color: #666; padding: 2px 6px;
+                    border-radius: 10px; font-size: 11px; min-width: 20px; text-align: center;
+                }
+                .filter-list-item.active .count { background: #2196f3; color: white; }
+                .filter-list:empty { display: none; }
+
+                /* Filter controls styles */
+                .quick-date-btn:disabled, .clear-date-btn:disabled {
+                    background: #e0e0e0 !important; color: #999 !important;
+                    cursor: not-allowed !important; border-color: #ccc !important;
+                }
+                input[type="date"]:disabled {
+                    background: #f5f5f5 !important; color: #999 !important; cursor: not-allowed !important;
+                }
+
+                .go-to-edit-container { display: flex; gap: 4px; align-items: center; margin-bottom: 8px; }
+                .go-to-edit-input { flex: 1; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; }
+                .go-to-edit-btn {
+                    background: #4285f4; border: none; border-radius: 4px; color: white;
+                    padding: 4px 8px; font-size: 12px; cursor: pointer; white-space: nowrap;
+                }
+                .go-to-edit-btn:hover { background: #3367d6; }
+                .go-to-edit-btn:disabled { background: #e0e0e0; color: #999; cursor: not-allowed; }
+            `;
+
+            const styleElement = createElement('style');
+            styleElement.textContent = styles;
+            document.head.appendChild(styleElement);
+        }
+
+        setupNavigationWatcher() {
+            this.observers.main = new MutationObserver(() => {
+                if (this.state.oldHref !== document.location.href) {
+                    this.state.oldHref = document.location.href;
+                    this.checkInitState();
                 }
             });
 
-            if (bestContainer) {
-                return bestContainer;
+            this.observers.main.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
+        checkInitState() {
+            const isEditsPage = window.location.href.includes("/contrib/") &&
+                !window.location.href.includes("/photos/") &&
+                !window.location.href.includes("/answers/") &&
+                !window.location.href.includes("/reviews/") &&
+                !window.location.href.includes("/contribute/");
+
+            if (isEditsPage && !this.state.isInit) {
+                this.initializeEditsUI();
+            } else if (!isEditsPage && this.state.isInit) {
+                this.deinitializeEditsUI();
+            }
+
+            if (!this.state.isEventHandlersInit) {
+                this.state.isEventHandlersInit = true;
+                this.waitForElementAndClick("okDpye PpaGLb", 1);
             }
         }
 
-        // Strategy 3: Original fallback method
-        const potentialContainers = document.getElementsByClassName('m6QErb XiKgde');
-        for (let i = 0; i < potentialContainers.length; i++) {
-            const container = potentialContainers[i];
-            const editItems = container.querySelectorAll('.EhpEb');
+        initializeEditsUI() {
+            console.log('Initializing Google Maps Enhanced Edits UI');
+            this.state.isInit = true;
+            this.createPopup();
+
+            // Setup auto cleanup (JS functions) only if not in performance mode
+            if (!this.state.performanceMode) {
+                this.setupAutoCleanup();
+            } else {
+                console.log('Performance mode enabled - skipping JS cleanup functions (CSS styles remain active)');
+            }
+
+            this.watchForContainer();
+        }
+
+        deinitializeEditsUI() {
+            console.log('Deinitializing Google Maps Enhanced Edits UI');
+
+            if (this.elements.popup?.parentNode) {
+                this.elements.popup.parentNode.removeChild(this.elements.popup);
+            }
+
+            Object.values(this.observers).forEach(observer => {
+                if (observer) {
+                    observer.disconnect();
+                }
+            });
+
+            Object.assign(this.state, {
+                isInit: false,
+                currentStatusFilter: null,
+                currentTypeFilter: null,
+                currentDateFilter: null,
+                currentDateRangeEnd: null
+            });
+
+            this.collections.shownStatuses.clear();
+            this.collections.shownTypes.clear();
+
+            Object.keys(this.elements).forEach(key => {
+                this.elements[key] = null;
+            });
+
+            this.cleanupModifications();
+        }
+
+        cleanupModifications() {
+            // Only cleanup JS-generated elements, not CSS-styled ones
+            document.querySelectorAll('.edit-number').forEach(el => el.remove());
+        }
+
+        togglePerformanceMode() {
+            this.state.performanceMode = !this.state.performanceMode;
+            localStorage.setItem(CONFIG.STORAGE_KEY_PERFORMANCE, this.state.performanceMode.toString());
+
+            if (this.state.performanceMode) {
+                console.log('Enabling performance mode - stopping JS cleanup functions (CSS styles remain active)');
+
+                // Disconnect JS cleanup observer
+                if (this.observers.autoCleanup) {
+                    this.observers.autoCleanup.disconnect();
+                    this.observers.autoCleanup = null;
+                }
+
+                // Remove JS-generated elements only
+                this.cleanupModifications();
+
+                // Disable numbering in performance mode since it requires JS
+                if (this.state.numberingEnabled) {
+                    this.state.numberingEnabled = false;
+                    localStorage.setItem(CONFIG.STORAGE_KEY_NUMBERING, 'false');
+
+                    const numberingBtn = document.querySelector('.toggle-numbering-btn');
+                    if (numberingBtn) {
+                        numberingBtn.textContent = 'Show Numbers';
+                        numberingBtn.style.backgroundColor = '#34a853';
+                        numberingBtn.disabled = true;
+                        numberingBtn.title = 'Disabled in performance mode';
+                    }
+                }
+
+            } else {
+                console.log('Disabling performance mode - enabling JS cleanup functions');
+
+                // Re-enable JS cleanup functions
+                this.setupAutoCleanup();
+
+                const numberingBtn = document.querySelector('.toggle-numbering-btn');
+                if (numberingBtn) {
+                    numberingBtn.disabled = false;
+                    numberingBtn.title = '';
+                }
+            }
+
+            const performanceBtn = document.querySelector('.toggle-performance-btn');
+            if (performanceBtn) {
+                performanceBtn.textContent = this.state.performanceMode ? 'Disable Performance Mode' : 'Enable Performance Mode';
+                performanceBtn.style.backgroundColor = this.state.performanceMode ? '#34a853' : '#ea4335';
+            }
+        }
+
+        findEditsContainer() {
+            const editItems = document.querySelectorAll(SELECTORS.EDIT_ITEM);
             if (editItems.length > 0) {
-                return container;
-            }
-        }
-
-        return null;
-    }
-
-    // Improved function to find scroll container
-    function findScrollContainer() {
-        // Strategy 1: Find container with edits
-        if (editsContainer) {
-            let container = editsContainer;
-            while (container && container !== document.body) {
-                const style = getComputedStyle(container);
-                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                    container.scrollHeight > container.clientHeight) {
-                    return container;
+                let container = editItems[0].parentElement;
+                while (container && container.children.length < editItems.length) {
+                    container = container.parentElement;
                 }
-                container = container.parentElement;
-            }
-        }
-
-        // Strategy 2: Look for common Google Maps scroll containers
-        const commonScrollSelectors = [
-            '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde',
-            '.CsJaGe',
-            '.siAUzd.Vetdqc',
-            '[role="main"]'
-        ];
-
-        for (const selector of commonScrollSelectors) {
-            const container = document.querySelector(selector);
-            if (container) {
-                const style = getComputedStyle(container);
-                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                    container.scrollHeight > container.clientHeight) {
+                if (container && container.children.length >= editItems.length) {
                     return container;
                 }
             }
+
+            const containers = Array.from(document.querySelectorAll(SELECTORS.EDIT_CONTAINER))
+                .filter(el => {
+                    const parent = el.parentElement;
+                    return parent && Array.from(parent.children).filter(child =>
+                        child.classList.contains('m6QErb') && child.classList.contains('XiKgde')
+                    ).length > 1;
+                });
+
+            if (containers.length > 0) {
+                return containers.reduce((best, container) => {
+                    const editCount = container.querySelectorAll(`${SELECTORS.EDIT_ITEM}, .Jo6p1e`).length;
+                    const bestCount = best ? best.querySelectorAll(`${SELECTORS.EDIT_ITEM}, .Jo6p1e`).length : 0;
+                    return editCount > bestCount ? container : best;
+                }, null);
+            }
+
+            return null;
         }
 
-        // Strategy 3: Find any scrollable container that contains edits
-        const scrollableElements = Array.from(document.querySelectorAll('*')).filter(el => {
-            const style = getComputedStyle(el);
-            return (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                el.scrollHeight > el.clientHeight &&
-                el.querySelector('.EhpEb');
-        });
+        findScrollContainer() {
+            if (this.elements.editsContainer) {
+                let container = this.elements.editsContainer;
+                while (container && container !== document.body) {
+                    const style = getComputedStyle(container);
+                    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                        container.scrollHeight > container.clientHeight) {
+                        return container;
+                    }
+                    container = container.parentElement;
+                }
+            }
 
-        return scrollableElements.length > 0 ? scrollableElements[0] : null;
-    }
+            const selectors = [
+                '.m6QErb.DxyBCb.kA9KIf.dS8AEf.XiKgde',
+                '.CsJaGe',
+                '.siAUzd.Vetdqc',
+                '[role="main"]'
+            ];
 
-    // Function to go to specific edit number
-    function goToEditNumber(targetNumber) {
-        if (!editsContainer || !numberingEnabled) {
-            alert('Edit numbering must be enabled to use this feature');
-            return;
+            for (const selector of selectors) {
+                const container = document.querySelector(selector);
+                if (container) {
+                    const style = getComputedStyle(container);
+                    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                        container.scrollHeight > container.clientHeight) {
+                        return container;
+                    }
+                }
+            }
+
+            return null;
         }
 
-        // Get all visible edit items
-        const allItems = Array.from(editsContainer.children);
-        const visibleItems = allItems.filter(item => getComputedStyle(item).display !== 'none');
+        watchForContainer() {
+            let retryCount = 0;
 
-        if (targetNumber < 1 || targetNumber > visibleItems.length) {
-            alert(`Please enter a number between 1 and ${visibleItems.length}`);
-            return;
+            const trySetup = () => {
+                console.log(`Finding edits container (attempt ${retryCount + 1}/${CONFIG.MAX_RETRIES})`);
+
+                const editsContainer = this.findEditsContainer();
+                if (!editsContainer) {
+                    retryCount++;
+                    if (retryCount < CONFIG.MAX_RETRIES) {
+                        setTimeout(trySetup, CONFIG.RETRY_DELAY);
+                    }
+                    return false;
+                }
+
+                this.elements.editsContainer = editsContainer;
+                this.elements.scrollContainer = this.findScrollContainer();
+
+                this.updateButtonsAndStats();
+                if (this.hasActiveFilters()) {
+                    this.filterEdits();
+                }
+
+                this.observers.container = new MutationObserver(this.debouncedUpdate);
+                this.observers.container.observe(editsContainer, {
+                    childList: true
+                });
+
+                return true;
+            };
+
+            trySetup();
         }
 
-        const targetItem = visibleItems[targetNumber - 1];
-        if (!targetItem) return;
-
-        // Clear any existing highlights
-        document.querySelectorAll('.edit-number.highlight').forEach(el => {
-            el.classList.remove('highlight');
-        });
-
-        // Find and highlight the target edit number
-        const numberElement = targetItem.querySelector('.edit-number');
-        if (numberElement) {
-            numberElement.classList.add('highlight');
-
-            // Remove highlight after 3 seconds
-            setTimeout(() => {
-                numberElement.classList.remove('highlight');
-            }, 3000);
+        hasActiveFilters() {
+            return this.state.currentStatusFilter ||
+                this.state.currentTypeFilter ||
+                this.state.currentDateFilter;
         }
 
-        // Scroll to the target item
-        if (scrollContainer) {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            const itemRect = targetItem.getBoundingClientRect();
-
-            // Calculate scroll position to center the item
-            const scrollTop = scrollContainer.scrollTop + itemRect.top - containerRect.top - (containerRect.height / 2) + (itemRect.height / 2);
-
-            scrollContainer.scrollTo({
-                top: scrollTop,
-                behavior: 'smooth'
+        createPopup() {
+            this.elements.popup = createElement('div', '', {
+                position: 'fixed',
+                top: '10px',
+                right: '10px',
+                backgroundColor: '#fff',
+                border: '1px solid #ccc',
+                borderRadius: '6px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                padding: '10px',
+                zIndex: '9999',
+                textAlign: 'left',
+                width: '280px'
             });
-        } else {
-            // Fallback: scroll into view
-            targetItem.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
+
+            this.elements.statsDiv = createElement('div', 'drag-handle', {
+                marginBottom: '8px'
+            }, 'Total edits: 0');
+
+            this.elements.popup.appendChild(this.elements.statsDiv);
+
+            this.createFilterSections();
+            this.createControlSections();
+
+            document.body.appendChild(this.elements.popup);
+            this.makeDraggable(this.elements.popup, '.drag-handle');
+        }
+
+        createFilterSections() {
+            this.elements.popup.appendChild(createElement('div', '', {
+                marginBottom: '4px',
+                fontSize: '12px',
+                fontWeight: 'bold'
+            }, 'Filter by status:'));
+            this.elements.statusList = createElement('div', 'filter-list');
+            this.elements.popup.appendChild(this.elements.statusList);
+
+            this.elements.popup.appendChild(createElement('div', '', {
+                marginBottom: '4px',
+                fontSize: '12px',
+                fontWeight: 'bold'
+            }, 'Filter by type:'));
+            this.elements.typeList = createElement('div', 'filter-list');
+            this.elements.popup.appendChild(this.elements.typeList);
+
+            this.elements.popup.appendChild(createElement('div', '', {
+                margin: '8px 0 4px',
+                fontSize: '12px',
+                fontWeight: 'bold'
+            }, 'Filter by date:'));
+            this.elements.dateContainer = createElement('div');
+            this.createDateControls();
+            this.elements.popup.appendChild(this.elements.dateContainer);
+        }
+
+        createDateControls() {
+            const dateStatus = createElement('div', 'date-status', {
+                marginBottom: '8px',
+                fontSize: '12px',
+                color: '#666'
+            }, 'No date filter active');
+            this.elements.dateContainer.appendChild(dateStatus);
+
+            const dateInputContainer = createElement('div', '', {
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                marginBottom: '8px'
+            });
+
+            const startLabel = createElement('label', '', {
+                fontSize: '12px'
+            }, 'Start date:');
+            const startDateInput = createElement('input', '', {
+                padding: '4px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '12px'
+            });
+            startDateInput.type = 'date';
+
+            const endLabel = createElement('label', '', {
+                fontSize: '12px'
+            }, 'End date (optional):');
+            const endDateInput = createElement('input', '', {
+                padding: '4px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '12px'
+            });
+            endDateInput.type = 'date';
+
+            startDateInput.addEventListener('change', () => this.handleStartDateChange(startDateInput, endDateInput));
+            endDateInput.addEventListener('change', () => this.handleEndDateChange(startDateInput, endDateInput));
+
+            dateInputContainer.appendChild(startLabel);
+            dateInputContainer.appendChild(startDateInput);
+            dateInputContainer.appendChild(endLabel);
+            dateInputContainer.appendChild(endDateInput);
+
+            const quickDateContainer = createElement('div', '', {
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '4px',
+                marginBottom: '8px'
+            });
+
+            const quickDates = [{
+                    name: 'Today',
+                    days: 0
+                },
+                {
+                    name: 'Yesterday',
+                    days: 1
+                },
+                {
+                    name: 'Last 7 days',
+                    days: 7
+                },
+                {
+                    name: 'Last 30 days',
+                    days: 30
+                }
+            ];
+
+            quickDates.forEach(({
+                name,
+                days
+            }) => {
+                const btn = createElement('button', 'quick-date-btn', {
+                    background: '#f0f0f0',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    flex: '1'
+                }, name);
+
+                btn.addEventListener('click', () => this.handleQuickDate(days, startDateInput, endDateInput));
+                quickDateContainer.appendChild(btn);
+            });
+
+            const clearBtn = createElement('button', 'clear-date-btn', {
+                background: '#dc362e',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'white',
+                padding: '6px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                width: '100%'
+            }, 'Clear Filter');
+
+            clearBtn.addEventListener('click', () => this.clearDateFilter(startDateInput, endDateInput));
+
+            this.elements.dateContainer.appendChild(dateInputContainer);
+            this.elements.dateContainer.appendChild(quickDateContainer);
+            this.elements.dateContainer.appendChild(clearBtn);
+        }
+
+        handleStartDateChange(startInput, endInput) {
+            if (startInput.value) {
+                const selectedDate = new Date(startInput.value + 'T00:00:00');
+                const today = new Date();
+                today.setHours(23, 59, 59, 999);
+
+                if (selectedDate > today) {
+                    alert('Cannot select a future date');
+                    startInput.value = '';
+                    return;
+                }
+
+                const dateRange = this.getEditDateRange();
+                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
+                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateString()}`);
+                    startInput.value = '';
+                    return;
+                }
+
+                this.state.currentDateFilter = selectedDate;
+                if (this.state.currentDateRangeEnd && this.state.currentDateFilter > this.state.currentDateRangeEnd) {
+                    this.state.currentDateRangeEnd = null;
+                    endInput.value = '';
+                }
+                this.filterEdits();
+                this.updateButtonsAndStats();
+            } else {
+                this.state.currentDateFilter = null;
+                this.state.currentDateRangeEnd = null;
+                this.filterEdits();
+                this.updateButtonsAndStats();
+            }
+        }
+
+        handleEndDateChange(startInput, endInput) {
+            if (endInput.value) {
+                const selectedDate = new Date(endInput.value + 'T23:59:59');
+                const today = new Date();
+                today.setHours(23, 59, 59, 999);
+
+                if (selectedDate > today) {
+                    alert('Cannot select a future date');
+                    endInput.value = '';
+                    return;
+                }
+
+                const dateRange = this.getEditDateRange();
+                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
+                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateRange()}`);
+                    endInput.value = '';
+                    return;
+                }
+
+                if (this.state.currentDateFilter && selectedDate >= this.state.currentDateFilter) {
+                    this.state.currentDateRangeEnd = selectedDate;
+                } else if (!this.state.currentDateFilter) {
+                    this.state.currentDateFilter = new Date(endInput.value + 'T00:00:00');
+                    this.state.currentDateRangeEnd = selectedDate;
+                    startInput.value = endInput.value;
+                } else {
+                    this.state.currentDateRangeEnd = this.state.currentDateFilter;
+                    this.state.currentDateFilter = new Date(endInput.value + 'T00:00:00');
+                    startInput.value = endInput.value;
+                }
+                this.filterEdits();
+                this.updateButtonsAndStats();
+            } else {
+                this.state.currentDateRangeEnd = null;
+                this.filterEdits();
+                this.updateButtonsAndStats();
+            }
+        }
+
+        handleQuickDate(days, startInput, endInput) {
+            const dateRange = this.getEditDateRange();
+            if (!dateRange.hasEdits) {
+                alert('No edits available for date filtering');
+                return;
+            }
+
+            const now = new Date();
+            if (days === 0) {
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                if (today < dateRange.min || today > dateRange.max) {
+                    alert('No edits available for today');
+                    return;
+                }
+                this.state.currentDateFilter = today;
+                this.state.currentDateRangeEnd = null;
+                startInput.value = this.state.currentDateFilter.toISOString().split('T')[0];
+                endInput.value = '';
+            } else {
+                let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
+                const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+                if (startDate < dateRange.min) {
+                    startDate = dateRange.min;
+                }
+
+                if (startDate > dateRange.max) {
+                    alert(`No edits available in the last ${days} days`);
+                    return;
+                }
+
+                this.state.currentDateFilter = startDate;
+                this.state.currentDateRangeEnd = endDate;
+                startInput.value = startDate.toISOString().split('T')[0];
+                endInput.value = endDate.toISOString().split('T')[0];
+            }
+            this.filterEdits();
+            this.updateButtonsAndStats();
+        }
+
+        clearDateFilter(startInput, endInput) {
+            startInput.value = '';
+            endInput.value = '';
+            this.state.currentDateFilter = null;
+            this.state.currentDateRangeEnd = null;
+            this.filterEdits();
+            this.updateButtonsAndStats();
+        }
+
+        getEditDateRange() {
+            if (!this.elements.editsContainer) return {
+                min: null,
+                max: null,
+                hasEdits: false
+            };
+
+            const editItems = Array.from(this.elements.editsContainer.children);
+            const dates = [];
+
+            editItems.forEach(item => {
+                if (this.isEditItemLoading(item)) return;
+
+                const dateElement = item.querySelector(SELECTORS.DATE_ELEMENT);
+                if (dateElement) {
+                    const dateText = dateElement.textContent.trim();
+                    const parsedDate = this.parseEditDate(dateText);
+                    if (parsedDate) {
+                        dates.push(parsedDate);
+                    }
+                }
+            });
+
+            if (dates.length === 0) {
+                return {
+                    min: null,
+                    max: null,
+                    hasEdits: false
+                };
+            }
+
+            const sortedDates = dates.sort((a, b) => a - b);
+            return {
+                min: sortedDates[0],
+                max: sortedDates[sortedDates.length - 1],
+                hasEdits: true
+            };
+        }
+
+        createControlSections() {
+            const goToHeader = createElement('div', '', {
+                margin: '8px 0 4px',
+                fontSize: '12px',
+                fontWeight: 'bold'
+            }, 'Go to edit number:');
+            this.elements.popup.appendChild(goToHeader);
+
+            const goToContainer = createElement('div', 'go-to-edit-container');
+            const goToInput = createElement('input', 'go-to-edit-input', {}, '');
+            goToInput.type = 'number';
+            goToInput.placeholder = 'Edit #';
+            goToInput.min = 1;
+
+            const goToBtn = createElement('button', 'go-to-edit-btn', {}, 'Go');
+
+            goToInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && goToInput.value) {
+                    this.goToEditNumber(parseInt(goToInput.value));
+                    goToInput.value = '';
+                }
+            });
+
+            goToBtn.addEventListener('click', () => {
+                if (goToInput.value) {
+                    this.goToEditNumber(parseInt(goToInput.value));
+                    goToInput.value = '';
+                }
+            });
+
+            goToContainer.appendChild(goToInput);
+            goToContainer.appendChild(goToBtn);
+            this.elements.popup.appendChild(goToContainer);
+
+            const optionsHeader = createElement('div', '', {
+                margin: '8px 0 4px',
+                fontSize: '12px',
+                fontWeight: 'bold'
+            }, 'Options:');
+            this.elements.popup.appendChild(optionsHeader);
+
+            const optionsContainer = createElement('div', '', {
+                marginBottom: '8px'
+            });
+
+            const performanceBtn = createElement('button', 'toggle-performance-btn', {
+                background: this.state.performanceMode ? '#34a853' : '#ea4335',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'white',
+                padding: '6px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                width: '100%',
+                marginBottom: '8px'
+            }, this.state.performanceMode ? 'Disable Performance Mode' : 'Enable Performance Mode');
+
+            performanceBtn.addEventListener('click', () => this.togglePerformanceMode());
+            optionsContainer.appendChild(performanceBtn);
+
+            const autoLoadBtn = createElement('button', 'toggle-autoload-btn', {
+                background: this.state.autoLoadEnabled ? '#ea4335' : '#34a853',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'white',
+                padding: '6px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                width: '100%',
+                marginBottom: '8px'
+            }, this.state.autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load');
+
+            autoLoadBtn.addEventListener('click', () => this.toggleAutoLoad());
+            optionsContainer.appendChild(autoLoadBtn);
+
+            const toggleBtn = createElement('button', 'toggle-numbering-btn', {
+                background: this.state.numberingEnabled ? '#ea4335' : '#34a853',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'white',
+                padding: '6px 12px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                width: '100%'
+            }, this.state.numberingEnabled ? 'Hide Numbers' : 'Show Numbers');
+
+            if (this.state.performanceMode) {
+                toggleBtn.disabled = true;
+                toggleBtn.title = 'Disabled in performance mode';
+                toggleBtn.style.backgroundColor = '#ccc';
+            }
+
+            toggleBtn.addEventListener('click', () => this.toggleEditNumbering());
+            optionsContainer.appendChild(toggleBtn);
+
+            this.elements.popup.appendChild(optionsContainer);
+        }
+
+        toggleAutoLoad() {
+            this.state.autoLoadEnabled = !this.state.autoLoadEnabled;
+
+            if (this.state.autoLoadEnabled) {
+                this.state.performanceModeBeforeAutoLoad = this.state.performanceMode;
+
+                if (!this.state.performanceMode) {
+                    this.togglePerformanceMode();
+                }
+
+                if (this.elements.scrollContainer) {
+                    this.elements.scrollContainer.scrollTop = this.elements.scrollContainer.scrollHeight;
+                }
+            } else {
+                if (this.state.performanceMode && !this.state.performanceModeBeforeAutoLoad) {
+                    this.togglePerformanceMode();
+                }
+
+                this.state.performanceModeBeforeAutoLoad = undefined;
+
+                // Immediately refresh the display when auto-load is disabled
+                this.updateButtonsAndStats();
+                if (this.hasActiveFilters()) {
+                    this.filterEdits();
+                }
+            }
+
+            const autoLoadBtn = document.querySelector('.toggle-autoload-btn');
+            if (autoLoadBtn) {
+                autoLoadBtn.textContent = this.state.autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load';
+                autoLoadBtn.style.backgroundColor = this.state.autoLoadEnabled ? '#ea4335' : '#34a853';
+            }
+        }
+
+        setupAutoCleanup() {
+            // Only setup JS cleanup functions if not in performance mode
+            if (this.state.performanceMode) {
+                return;
+            }
+
+            this.observers.autoCleanup = new MutationObserver(() => {
+                // Only JS functions that cannot be replaced with CSS
+                this.replaceSpecificEdit(); // Modifies text content - needs JS
+                this.addTooltipToEditName(); // Adds title attribute - needs JS
+                this.addEditNumbering(); // Adds DOM elements - needs JS
+            });
+
+            this.observers.autoCleanup.observe(document.body, {
+                childList: true,
+                subtree: true
             });
         }
-    }
 
-    // Deinitialize function to clean up when leaving edits page
-    function deinitializeEditsUI() {
-        console.log('Deinitializing Google Maps Enhanced Edits UI');
+        replaceSpecificEdit() {
+            if (this.state.performanceMode) return;
 
-        // Remove popup
-        if (popup && popup.parentNode) {
-            popup.parentNode.removeChild(popup);
-            popup = null;
+            this.observers.autoCleanup?.disconnect();
+
+            document.querySelectorAll(SELECTORS.EDIT_ITEM).forEach(item => {
+                const mediumEl = item.querySelector('.fontBodyMedium.JjQyvd.TqOXoe');
+                const smallEl = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+
+                if (mediumEl && smallEl) {
+                    const texts = Array.from(mediumEl.querySelectorAll('.NlVald.xMSdlb'))
+                        .map(el => el.textContent.trim());
+                    smallEl.textContent = texts.join(', ');
+                }
+            });
+
+            if (this.observers.autoCleanup) {
+                this.observers.autoCleanup.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+            }
         }
 
-        // Disconnect observers
-        if (autoCleanupObserver) {
-            autoCleanupObserver.disconnect();
-            autoCleanupObserver = null;
+        addTooltipToEditName() {
+            if (this.state.performanceMode) return;
+
+            document.querySelectorAll(SELECTORS.EDIT_NAME_SELECTOR)
+                .forEach(item => item.title = "Go to map edit");
         }
 
-        if (containerObserver) {
-            containerObserver.disconnect();
-            containerObserver = null;
+        addEditNumbering() {
+            if (this.state.performanceMode || !this.state.numberingEnabled) return;
+
+            document.querySelectorAll(SELECTORS.EDIT_ITEM).forEach((item, index) => {
+                const wrap = item.querySelector(SELECTORS.EDIT_WRAP);
+                if (!wrap) return;
+
+                let numberElement = wrap.querySelector('.edit-number');
+                if (!numberElement) {
+                    numberElement = createElement('div', 'edit-number', {}, (index + 1).toString());
+                    wrap.insertBefore(numberElement, wrap.children[0]);
+                } else {
+                    numberElement.textContent = (index + 1).toString();
+                }
+            });
         }
 
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
+        updateEditNumbering() {
+            if (this.state.performanceMode || !this.elements.editsContainer || !this.state.numberingEnabled) return;
+
+            const allItems = Array.from(this.elements.editsContainer.children);
+            let visibleIndex = 1;
+
+            allItems.forEach(item => {
+                const numberElement = item.querySelector('.edit-number');
+                const isVisible = getComputedStyle(item).display !== 'none';
+
+                if (numberElement) {
+                    if (isVisible) {
+                        numberElement.textContent = visibleIndex;
+                        numberElement.style.display = '';
+                        visibleIndex++;
+                    } else {
+                        numberElement.style.display = 'none';
+                    }
+                }
+            });
         }
 
-        // Reset variables
-        currentStatusFilter = null;
-        currentTypeFilter = null;
-        currentDateFilter = null;
-        currentDateRangeEnd = null;
-        editsContainer = null;
-        btnContainer = null;
-        typeContainer = null;
-        dateContainer = null;
-        statsDiv = null;
-        autoLoadEnabled = false;
-        scrollContainer = null;
+        toggleEditNumbering() {
+            if (this.state.performanceMode) {
+                alert('Edit numbering is disabled in performance mode to prevent browser lag.');
+                return;
+            }
 
-        // Clear maps
-        shownStatuses.clear();
-        shownTypes.clear();
+            this.state.numberingEnabled = !this.state.numberingEnabled;
+            localStorage.setItem(CONFIG.STORAGE_KEY_NUMBERING, this.state.numberingEnabled.toString());
 
-        // Reset initialization flags
-        isInit = false;
+            const numberElements = document.querySelectorAll('.edit-number');
+            if (this.state.numberingEnabled) {
+                numberElements.forEach(el => el.classList.remove('hidden'));
+                this.addEditNumbering();
+                this.updateEditNumbering();
+            } else {
+                numberElements.forEach(el => el.classList.add('hidden'));
+            }
 
-        // Remove edit numbers from any remaining elements
-        document.querySelectorAll('.edit-number').forEach(el => el.remove());
-
-        console.log('UI deinitialized successfully');
-    }
-
-    // Toggle auto load on/off
-    function toggleAutoLoad() {
-        autoLoadEnabled = !autoLoadEnabled;
-
-        if (autoLoadEnabled && scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            const toggleBtn = document.querySelector('.toggle-numbering-btn');
+            if (toggleBtn) {
+                toggleBtn.textContent = this.state.numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
+                toggleBtn.style.backgroundColor = this.state.numberingEnabled ? '#ea4335' : '#34a853';
+            }
         }
 
-        // Update toggle button text and color
-        const autoLoadBtn = document.querySelector('.toggle-autoload-btn');
-        if (autoLoadBtn) {
-            autoLoadBtn.textContent = autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load';
-            autoLoadBtn.style.backgroundColor = autoLoadEnabled ? '#ea4335' : '#34a853';
+        goToEditNumber(targetNumber) {
+            if (this.state.performanceMode) {
+                if (!this.elements.editsContainer) {
+                    alert('Edits container not found');
+                    return;
+                }
+
+                const visibleItems = Array.from(this.elements.editsContainer.children)
+                    .filter(item => getComputedStyle(item).display !== 'none');
+
+                if (targetNumber < 1 || targetNumber > visibleItems.length) {
+                    alert(`Please enter a number between 1 and ${visibleItems.length}`);
+                    return;
+                }
+
+                const targetItem = visibleItems[targetNumber - 1];
+                this.scrollToItem(targetItem);
+                return;
+            }
+
+            if (!this.elements.editsContainer || !this.state.numberingEnabled) {
+                alert('Edit numbering must be enabled to use this feature');
+                return;
+            }
+
+            const visibleItems = Array.from(this.elements.editsContainer.children)
+                .filter(item => getComputedStyle(item).display !== 'none');
+
+            if (targetNumber < 1 || targetNumber > visibleItems.length) {
+                alert(`Please enter a number between 1 and ${visibleItems.length}`);
+                return;
+            }
+
+            const targetItem = visibleItems[targetNumber - 1];
+            const numberElement = targetItem.querySelector('.edit-number');
+
+            if (numberElement) {
+                document.querySelectorAll('.edit-number.highlight')
+                    .forEach(el => el.classList.remove('highlight'));
+
+                numberElement.classList.add('highlight');
+                setTimeout(() => numberElement.classList.remove('highlight'), CONFIG.HIGHLIGHT_DURATION);
+            }
+
+            this.scrollToItem(targetItem);
         }
-    }
 
-    // Helper function to parse date from edit text
-    function parseEditDate(dateText) {
-        if (!dateText) return null;
+        scrollToItem(item) {
+            if (this.elements.scrollContainer) {
+                const containerRect = this.elements.scrollContainer.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                const scrollTop = this.elements.scrollContainer.scrollTop +
+                    itemRect.top - containerRect.top - (containerRect.height / 2) + (itemRect.height / 2);
 
-        const now = new Date();
-        let editDate;
+                this.elements.scrollContainer.scrollTo({
+                    top: scrollTop,
+                    behavior: 'smooth'
+                });
+            } else {
+                item.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'center'
+                });
+            }
+        }
 
-        // Handle "Submitted [Month] [Day]" format (e.g., "Submitted Aug 7")
-        if (dateText.includes('Submitted')) {
+        filterEdits() {
+            if (!this.elements.editsContainer) return;
+
+            if (this.elements.scrollContainer) {
+                this.elements.scrollContainer.scrollTop = 0;
+            }
+
+            Array.from(this.elements.editsContainer.children).forEach(item => {
+                const isVisible = this.isItemVisible(item);
+                item.style.display = isVisible ? '' : 'none';
+            });
+
+            this.debouncedNumbering();
+        }
+
+        isItemVisible(item) {
+            if (this.isEditItemLoading(item)) return true;
+
+            if (this.state.currentStatusFilter) {
+                const statusObj = STATUSES.find(s => s.name === this.state.currentStatusFilter);
+                if (!statusObj || !item.querySelector(`.${statusObj.className}`)) {
+                    return false;
+                }
+            }
+
+            if (this.state.currentTypeFilter) {
+                const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+                if (!typeElement) return false;
+
+                const types = typeElement.textContent.split(',').map(t => t.trim());
+                if (!types.includes(this.state.currentTypeFilter)) {
+                    return false;
+                }
+            }
+
+            if (this.state.currentDateFilter) {
+                const dateElement = item.querySelector(SELECTORS.DATE_ELEMENT);
+                if (!dateElement) return true;
+
+                const dateText = dateElement.textContent.trim();
+                if (!dateText) return true;
+
+                if (!this.isDateInRange(dateText)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        isEditItemLoading(item) {
+            const dateElement = item.querySelector(SELECTORS.DATE_ELEMENT);
+            const titleElement = item.querySelector(SELECTORS.TITLE_ELEMENT);
+            const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+
+            return !dateElement || !titleElement || !typeElement ||
+                !dateElement.textContent.trim() || !titleElement.textContent.trim() ||
+                !typeElement.textContent.trim();
+        }
+
+        isDateInRange(dateText) {
+            if (!this.state.currentDateFilter || !dateText.trim()) return true;
+
+            const editDate = this.parseEditDate(dateText);
+            if (!editDate) return true;
+
+            const editDateOnly = new Date(editDate.getFullYear(), editDate.getMonth(), editDate.getDate());
+            const filterDateOnly = new Date(this.state.currentDateFilter.getFullYear(),
+                this.state.currentDateFilter.getMonth(), this.state.currentDateFilter.getDate());
+
+            if (this.state.currentDateRangeEnd) {
+                const endDateOnly = new Date(this.state.currentDateRangeEnd.getFullYear(),
+                    this.state.currentDateRangeEnd.getMonth(), this.state.currentDateRangeEnd.getDate());
+                return editDateOnly >= filterDateOnly && editDateOnly <= endDateOnly;
+            }
+
+            return editDateOnly.getTime() === filterDateOnly.getTime();
+        }
+
+        parseEditDate(dateText) {
+            if (!dateText) return null;
+
+            const now = new Date();
+
             const submittedMatch = dateText.match(/Submitted\s+([A-Za-z]+)\s+(\d+)/i);
             if (submittedMatch) {
                 const monthStr = submittedMatch[1];
                 const day = parseInt(submittedMatch[2]);
-                const currentYear = now.getFullYear();
-
-                // Parse the month name to get month index
                 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
                 ];
-                const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                    'July', 'August', 'September', 'October', 'November', 'December'
-                ];
 
-                let monthIndex = monthNames.findIndex(m => monthStr.toLowerCase().startsWith(m.toLowerCase()));
-                if (monthIndex === -1) {
-                    monthIndex = fullMonthNames.findIndex(m => monthStr.toLowerCase() === m.toLowerCase());
-                }
+                const monthIndex = monthNames.findIndex(m =>
+                    monthStr.toLowerCase().startsWith(m.toLowerCase()));
 
                 if (monthIndex !== -1) {
-                    editDate = new Date(currentYear, monthIndex, day);
-
-                    // If the date is in the future, assume it's from last year
-                    if (editDate > now) {
-                        editDate.setFullYear(currentYear - 1);
-                    }
+                    const editDate = new Date(now.getFullYear(), monthIndex, day);
+                    return editDate > now ? new Date(now.getFullYear() - 1, monthIndex, day) : editDate;
                 }
             }
-        }
-        // Handle relative dates like "2 days ago", "1 week ago", etc.
-        else if (dateText.includes('ago')) {
-            const match = dateText.match(/(\d+)\s*(day|week|month|year)s?\s*ago/i);
-            if (match) {
-                const amount = parseInt(match[1]);
-                const unit = match[2].toLowerCase();
-                editDate = new Date(now);
+
+            const relativeMatch = dateText.match(/(\d+)\s*(day|week|month|year)s?\s*ago/i);
+            if (relativeMatch) {
+                const amount = parseInt(relativeMatch[1]);
+                const unit = relativeMatch[2].toLowerCase();
+                const editDate = new Date(now);
 
                 switch (unit) {
                     case 'day':
@@ -476,1162 +1218,348 @@
                         editDate.setFullYear(editDate.getFullYear() - amount);
                         break;
                 }
-            }
-        }
-        // Handle "today", "yesterday" text
-        else if (dateText.toLowerCase().includes('today')) {
-            editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        } else if (dateText.toLowerCase().includes('yesterday')) {
-            editDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            editDate.setDate(editDate.getDate() - 1);
-        } else {
-            // Try to parse absolute dates
-            editDate = new Date(dateText);
-            if (isNaN(editDate.getTime())) {
-                return null;
-            }
-        }
-
-        return editDate && !isNaN(editDate.getTime()) ? editDate : null;
-    }
-
-    // Helper function to get date range of available edits
-    function getEditDateRange() {
-        if (!editsContainer) return {
-            min: null,
-            max: null,
-            hasEdits: false
-        };
-
-        const editItems = Array.from(editsContainer.children);
-        const dates = [];
-
-        editItems.forEach(item => {
-            // Skip items that are still loading
-            if (isEditItemLoading(item)) return;
-
-            const dateElement = item.querySelector('.fontBodySmall.eYfez');
-            if (dateElement) {
-                const dateText = dateElement.textContent.trim();
-                const parsedDate = parseEditDate(dateText);
-                if (parsedDate) {
-                    dates.push(parsedDate);
-                }
-            }
-        });
-
-        if (dates.length === 0) {
-            return {
-                min: null,
-                max: null,
-                hasEdits: false
-            };
-        }
-
-        const sortedDates = dates.sort((a, b) => a - b);
-        return {
-            min: sortedDates[0],
-            max: sortedDates[sortedDates.length - 1],
-            hasEdits: true
-        };
-    }
-
-    // Helper function to update date input constraints
-    function updateDateInputConstraints() {
-        const startDateInput = dateContainer.querySelector('input[type="date"]:first-of-type');
-        const endDateInput = dateContainer.querySelector('input[type="date"]:last-of-type');
-        const quickDateButtons = dateContainer.querySelectorAll('.quick-date-btn');
-        const clearBtn = dateContainer.querySelector('.clear-date-btn');
-
-        if (!startDateInput || !endDateInput) return;
-
-        const dateRange = getEditDateRange();
-        const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
-
-        // Set max date to today for both inputs
-        startDateInput.max = todayStr;
-        endDateInput.max = todayStr;
-
-        if (dateRange.hasEdits) {
-            // Set min date to earliest edit date
-            const minDateStr = dateRange.min.toISOString().split('T')[0];
-            startDateInput.min = minDateStr;
-            endDateInput.min = minDateStr;
-
-            // Enable inputs and buttons
-            startDateInput.disabled = false;
-            endDateInput.disabled = false;
-            quickDateButtons.forEach(btn => btn.disabled = false);
-            clearBtn.disabled = currentDateFilter === null;
-
-            // Update placeholder text
-            startDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
-            endDateInput.title = `Select date between ${dateRange.min.toLocaleDateString()} and ${today.toLocaleDateString()}`;
-        } else {
-            // Disable inputs and buttons when no edits are available
-            startDateInput.disabled = true;
-            endDateInput.disabled = true;
-            startDateInput.value = '';
-            endDateInput.value = '';
-            quickDateButtons.forEach(btn => btn.disabled = true);
-            clearBtn.disabled = true;
-
-            // Update placeholder text
-            startDateInput.title = 'No edits available for date filtering';
-            endDateInput.title = 'No edits available for date filtering';
-        }
-    }
-
-    // Helper function to update go-to-edit input constraints
-    function updateGoToEditConstraints() {
-        const goToInput = popup?.querySelector('.go-to-edit-input');
-        const goToBtn = popup?.querySelector('.go-to-edit-btn');
-
-        if (!goToInput || !goToBtn || !editsContainer) return;
-
-        const visibleItems = Array.from(editsContainer.children).filter(item =>
-            getComputedStyle(item).display !== 'none'
-        );
-
-        const maxNumber = visibleItems.length;
-
-        if (maxNumber === 0) {
-            goToInput.disabled = true;
-            goToBtn.disabled = true;
-            goToInput.placeholder = 'No edits available';
-            goToInput.title = 'No edits available to navigate to';
-        } else {
-            goToInput.disabled = false;
-            goToBtn.disabled = !numberingEnabled;
-            goToInput.placeholder = `1-${maxNumber}`;
-            goToInput.title = numberingEnabled ?
-                `Enter edit number between 1 and ${maxNumber}` :
-                'Enable edit numbering to use this feature';
-            goToInput.max = maxNumber;
-            goToInput.min = 1;
-        }
-    }
-
-    // Helper function to check if an edit item is still loading
-    function isEditItemLoading(item) {
-        // Check for common indicators that content is still loading
-        const dateElement = item.querySelector('.fontBodySmall.eYfez');
-        const titleElement = item.querySelector('.fontTitleLarge.HYVdIf');
-        const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-
-        // If key elements are missing or empty, consider it still loading
-        if (!dateElement || !titleElement || !typeElement) return true;
-        if (!dateElement.textContent.trim() || !titleElement.textContent.trim() || !typeElement.textContent.trim()) return true;
-
-        // Check for loading indicators or placeholder text
-        const dateText = dateElement.textContent.trim();
-        const titleText = titleElement.textContent.trim();
-
-        if (dateText.includes('Loading') || titleText.includes('Loading') ||
-            dateText === '...' || titleText === '...') return true;
-
-        return false;
-    }
-
-    // Helper function to check if edit date is in selected range
-    function isDateInRange(dateText) {
-        if (!currentDateFilter) return true;
-
-        // If date text is empty or not yet loaded, don't filter it out
-        if (!dateText || dateText.trim() === '') return true;
-
-        const editDate = parseEditDate(dateText);
-        if (!editDate) return true; // Include items we can't parse or that haven't loaded yet
-
-        const editDateOnly = new Date(editDate.getFullYear(), editDate.getMonth(), editDate.getDate());
-        const filterDateOnly = new Date(currentDateFilter.getFullYear(), currentDateFilter.getMonth(), currentDateFilter.getDate());
-
-        if (currentDateRangeEnd) {
-            // Range filtering
-            const endDateOnly = new Date(currentDateRangeEnd.getFullYear(), currentDateRangeEnd.getMonth(), currentDateRangeEnd.getDate());
-            return editDateOnly >= filterDateOnly && editDateOnly <= endDateOnly;
-        } else {
-            // Single date filtering
-            return editDateOnly.getTime() === filterDateOnly.getTime();
-        }
-    }
-
-    // Add numbering to all edit items (moved to global scope)
-    function addEditNumbering() {
-        const PANE_SELECTOR = '.EhpEb';
-        document.querySelectorAll(PANE_SELECTOR).forEach((item, index) => {
-            const wrap = item.querySelector('.qjoALb');
-            if (!wrap) return;
-
-            // Remove existing number if present
-            const existingNumber = wrap.querySelector('.edit-number');
-            if (existingNumber) {
-                existingNumber.remove();
+                return editDate;
             }
 
-            // Add new number only if numbering is enabled
-            if (numberingEnabled) {
-                const numberElement = document.createElement('div');
-                numberElement.className = 'edit-number';
-                numberElement.textContent = index + 1;
-                wrap.insertBefore(numberElement, wrap.children[0]);
+            if (dateText.toLowerCase().includes('today')) {
+                return new Date(now.getFullYear(), now.getMonth(), now.getDate());
             }
-        });
-    }
-
-    // Automatically clean up .eYfez panes and symbol parents
-    function setupAutoCleanup() {
-        const CLEAN_SELECTOR = '.eYfez';
-        const SYMBOL_SELECTOR = '.MaIKSd.google-symbols.G47vBd';
-        const PANE_SELECTOR = '.EhpEb'
-        const EDIT_NAME_SELECTOR = '.fontTitleLarge.HYVdIf'
-        autoCleanupObserver = new MutationObserver(() => {
-            cleanPanes();
-            removeSymbolParents();
-            replaceSpecificEdit();
-            addColorStrip();
-            addTooltipToEditName();
-            addEditNumberingLocal();
-            makeImagesSquare();
-        });
-
-        // remove first child of each .eYfez pane
-        function cleanPanes() {
-            document.querySelectorAll(CLEAN_SELECTOR).forEach(pane => {
-                const first = pane.firstElementChild;
-                if (first && pane.children.length >= 2) first.remove();
-            });
-        }
-
-        function makeImagesSquare() {
-            Array.from(document.getElementsByClassName("PInAKb")).forEach((e) => {
-                let squareBgImage = e.style.backgroundImage.split("-br100").join("");
-                e.style.backgroundImage = squareBgImage;
-            });
-        }
-
-        // remove the parent of any matching symbol element
-        function removeSymbolParents() {
-            document.querySelectorAll(SYMBOL_SELECTOR).forEach(el => {
-                const p = el.parentElement;
-                if (p) {
-                    p.style = "display: none !important;";
-                }
-            });
-        }
-
-        function replaceSpecificEdit() {
-            autoCleanupObserver.disconnect();
-            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
-                const mediumEl = item.querySelector(
-                    '.fontBodyMedium.JjQyvd.TqOXoe'
-                );
-                const smallEl = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-                if (mediumEl && smallEl) {
-                    const texts = Array.from(
-                        mediumEl.querySelectorAll('.NlVald.xMSdlb')
-                    ).map(el => el.textContent.trim());
-                    smallEl.textContent = texts.join(', ');
-                }
-            });
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        function addColorStrip() {
-            autoCleanupObserver.disconnect();
-            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
-                const wrap = item.querySelector('.Jo6p1e');
-                if (!wrap) return;
-                // find which status this item has
-                const statusObj = STATUSES.find(s => item.querySelector(`.${s.className}`));
-                if (statusObj) {
-                    wrap.style.borderLeft = `10px solid ${statusObj.color}`;
-                    item.querySelector(`.${statusObj.className}`).style = "display: none !important;";
-                } else {
-                    // no status found → clear any old border
-                    wrap.style.borderLeft = '';
-                }
-            });
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        function addTooltipToEditName() {
-            autoCleanupObserver.disconnect();
-            document.querySelectorAll(EDIT_NAME_SELECTOR).forEach(item => {
-                item.title = "Go to map edit";
-            });
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        function addEditNumberingLocal() {
-            autoCleanupObserver.disconnect();
-            addEditNumbering();
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-
-        // initial pass
-        cleanPanes();
-        removeSymbolParents();
-        replaceSpecificEdit();
-        addColorStrip();
-        addTooltipToEditName();
-        addEditNumberingLocal();
-        autoCleanupObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    }
-
-    // Update edit numbering based on visible items
-    function updateEditNumbering() {
-        if (!editsContainer || !numberingEnabled) return;
-
-        const allItems = Array.from(editsContainer.children);
-        let visibleIndex = 1;
-
-        allItems.forEach(item => {
-            const wrap = item.querySelector('.qjoALb');
-            const numberElement = wrap?.querySelector('.edit-number');
-
-            if (getComputedStyle(item).display !== 'none') {
-                // Item is visible, update number
-                if (numberElement) {
-                    numberElement.textContent = visibleIndex;
-                    numberElement.style.display = '';
-                }
-                visibleIndex++;
-            } else {
-                // Item is hidden, hide number
-                if (numberElement) {
-                    numberElement.style.display = 'none';
-                }
+            if (dateText.toLowerCase().includes('yesterday')) {
+                const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                yesterday.setDate(yesterday.getDate() - 1);
+                return yesterday;
             }
-        });
-    }
 
-    // Toggle edit numbering on/off
-    function toggleEditNumbering() {
-        numberingEnabled = !numberingEnabled;
-        saveNumberingPreference(); // Save to localStorage
-
-        if (numberingEnabled) {
-            // Show all existing numbers
-            document.querySelectorAll('.edit-number').forEach(numberEl => {
-                numberEl.classList.remove('hidden');
-            });
-            // Re-add numbering to any items that don't have numbers yet
-            addEditNumbering();
-            updateEditNumbering();
-        } else {
-            // Hide all numbers
-            document.querySelectorAll('.edit-number').forEach(numberEl => {
-                numberEl.classList.add('hidden');
-            });
+            const parsedDate = new Date(dateText);
+            return !isNaN(parsedDate.getTime()) ? parsedDate : null;
         }
 
-        // Update toggle button text
-        const toggleBtn = document.querySelector('.toggle-numbering-btn');
-        if (toggleBtn) {
-            toggleBtn.textContent = numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
-            toggleBtn.style.backgroundColor = numberingEnabled ? '#ea4335' : '#34a853';
-        }
+        updateButtonsAndStats() {
+            if (!this.elements.editsContainer) return;
 
-        // Update go-to-edit constraints
-        updateGoToEditConstraints();
-    }
+            // Skip expensive operations during auto load for better performance
+            if (this.state.autoLoadEnabled) {
+                // Show message that calculations are paused
+                this.elements.statsDiv.textContent = 'Auto-load active - calculations paused for performance';
+                this.elements.statsDiv.style.color = '#ff9800';
+                this.elements.statsDiv.style.fontWeight = 'bold';
 
-    // --- filterEdits() ---
-    function filterEdits() {
-        if (!editsContainer) return;
+                // Clear filter lists and show placeholder messages
+                this.showAutoLoadPlaceholders();
 
-        // Find scroll container if not found yet
-        if (!scrollContainer) {
-            scrollContainer = findScrollContainer();
-        }
-
-        if (scrollContainer) {
-            scrollContainer.scrollTop = 0;
-        }
-
-        Array.from(editsContainer.children).forEach(item => {
-            let visible = true;
-
-            // If the item is still loading, always keep it visible to avoid premature filtering
-            if (isEditItemLoading(item)) {
-                item.style.display = '';
+                if (this.elements.scrollContainer) {
+                    this.elements.scrollContainer.scrollTop = this.elements.scrollContainer.scrollHeight;
+                }
                 return;
             }
 
-            // status filter via CSS class
-            if (currentStatusFilter) {
-                const statusObj = STATUSES.find(s => s.name === currentStatusFilter);
-                if (
-                    !statusObj ||
-                    !item.querySelector(`.${statusObj.className}`)
-                ) {
-                    visible = false;
-                }
+            // Reset stats styling when not in auto-load mode
+            this.elements.statsDiv.style.color = '';
+            this.elements.statsDiv.style.fontWeight = '';
+
+            if (!this.elements.scrollContainer) {
+                this.elements.scrollContainer = this.findScrollContainer();
             }
 
-            // type filter remains unchanged
-            if (visible && currentTypeFilter) {
-                const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-                if (!b) {
-                    visible = false;
-                } else {
-                    const parts = b.textContent.split(',').map(p => p.trim());
-                    if (!parts.includes(currentTypeFilter)) {
-                        visible = false;
-                    }
+            const visibleItems = Array.from(this.elements.editsContainer.children)
+                .filter(item => getComputedStyle(item).display !== 'none');
+
+            this.updateStatusList(visibleItems);
+            this.updateTypeList(visibleItems);
+            this.updateStats(visibleItems);
+            this.updateDateFilterDisplay();
+            this.updateGoToEditConstraints();
+        }
+        showAutoLoadPlaceholders() {
+            // Clear existing filter lists
+            this.collections.shownStatuses.clear();
+            this.collections.shownTypes.clear();
+            this.elements.statusList.innerHTML = '';
+            this.elements.typeList.innerHTML = '';
+
+            // Add placeholder messages
+            const statusPlaceholder = createElement('div', '', {
+                padding: '8px',
+                textAlign: 'center',
+                color: '#666',
+                fontStyle: 'italic',
+                fontSize: '11px'
+            }, 'Filters paused during auto-load');
+
+            const typePlaceholder = createElement('div', '', {
+                padding: '8px',
+                textAlign: 'center',
+                color: '#666',
+                fontStyle: 'italic',
+                fontSize: '11px'
+            }, 'Filters paused during auto-load');
+
+            this.elements.statusList.appendChild(statusPlaceholder);
+            this.elements.typeList.appendChild(typePlaceholder);
+        }
+
+        updateStatusList(visibleItems) {
+            const statusCounts = {};
+            STATUSES.forEach(status => {
+                statusCounts[status.name] = visibleItems.filter(item =>
+                    item.querySelector(`.${status.className}`)
+                ).length;
+            });
+
+            STATUSES.forEach(status => {
+                const count = statusCounts[status.name];
+                const hasCount = count > 0;
+
+                if (hasCount && !this.collections.shownStatuses.has(status.name)) {
+                    this.createStatusListItem(status, count);
+                } else if (hasCount && this.collections.shownStatuses.has(status.name)) {
+                    const countElement = this.collections.shownStatuses.get(status.name).querySelector('.count');
+                    if (countElement) countElement.textContent = count;
+                } else if (!hasCount && this.collections.shownStatuses.has(status.name)) {
+                    this.removeStatusListItem(status.name);
                 }
+            });
+        }
+
+        createStatusListItem(status, count) {
+            const item = createElement('div', 'filter-list-item');
+            if (this.state.currentStatusFilter === status.name) {
+                item.classList.add('active');
             }
 
-            // date filter
-            if (visible && currentDateFilter) {
-                const dateElement = item.querySelector('.fontBodySmall.eYfez');
-                if (!dateElement) {
-                    // If no date element exists yet, don't filter it out (content may still be loading)
-                    visible = true;
+            const content = createElement('div', '', {
+                display: 'flex',
+                alignItems: 'center',
+                flex: '1'
+            });
+
+            const indicator = createElement('div', 'status-indicator', {
+                backgroundColor: status.color
+            });
+
+            const name = createElement('span', '', {}, status.name);
+            const countElement = createElement('span', 'count', {}, count.toString());
+
+            content.appendChild(indicator);
+            content.appendChild(name);
+            item.appendChild(content);
+            item.appendChild(countElement);
+
+            item.addEventListener('click', () => {
+                this.state.currentStatusFilter =
+                    this.state.currentStatusFilter === status.name ? null : status.name;
+
+                // Update active state
+                this.collections.shownStatuses.forEach(listItem => {
+                    listItem.classList.remove('active');
+                });
+                if (this.state.currentStatusFilter === status.name) {
+                    item.classList.add('active');
+                }
+
+                this.debouncedFilter();
+                this.debouncedUpdate();
+            });
+
+            this.collections.shownStatuses.set(status.name, item);
+            this.elements.statusList.appendChild(item);
+        }
+
+        removeStatusListItem(statusName) {
+            const item = this.collections.shownStatuses.get(statusName);
+            if (item && item.parentNode) {
+                item.parentNode.removeChild(item);
+            }
+            this.collections.shownStatuses.delete(statusName);
+
+            if (this.state.currentStatusFilter === statusName) {
+                this.state.currentStatusFilter = null;
+                this.debouncedFilter();
+                this.debouncedUpdate();
+            }
+        }
+
+        updateTypeList(visibleItems) {
+            const typeCounts = {};
+
+            visibleItems.forEach(item => {
+                const typeElement = item.querySelectorAll('.BjkJBb')[0]?.children[1];
+                if (!typeElement) return;
+
+                typeElement.textContent.split(',').forEach(part => {
+                    const type = part.trim();
+                    if (type) typeCounts[type] = (typeCounts[type] || 0) + 1;
+                });
+            });
+
+            // Update existing items
+            Object.entries(typeCounts).forEach(([type, count]) => {
+                if (!this.collections.shownTypes.has(type)) {
+                    this.createTypeListItem(type, count);
                 } else {
-                    const dateText = dateElement.textContent.trim();
-                    // If date text is empty or just whitespace, assume content is still loading
-                    if (!dateText || dateText === '') {
-                        visible = true;
+                    const countElement = this.collections.shownTypes.get(type).querySelector('.count');
+                    if (countElement) countElement.textContent = count.toString();
+                }
+            });
+
+            // Remove items that no longer exist
+            for (const [type, item] of this.collections.shownTypes.entries()) {
+                if (!typeCounts[type]) {
+                    this.removeTypeListItem(type);
+                }
+            }
+        }
+
+        createTypeListItem(type, count) {
+            const item = createElement('div', 'filter-list-item');
+            if (this.state.currentTypeFilter === type) {
+                item.classList.add('active');
+            }
+
+            const name = createElement('span', '', {}, type);
+            const countElement = createElement('span', 'count', {}, count.toString());
+
+            item.appendChild(name);
+            item.appendChild(countElement);
+
+            item.addEventListener('click', () => {
+                this.state.currentTypeFilter =
+                    this.state.currentTypeFilter === type ? null : type;
+
+                // Update active state
+                this.collections.shownTypes.forEach(listItem => {
+                    listItem.classList.remove('active');
+                });
+                if (this.state.currentTypeFilter === type) {
+                    item.classList.add('active');
+                }
+
+                this.debouncedFilter();
+                this.debouncedUpdate();
+            });
+
+            this.collections.shownTypes.set(type, item);
+            this.elements.typeList.appendChild(item);
+        }
+
+        removeTypeListItem(type) {
+            const item = this.collections.shownTypes.get(type);
+            if (item && item.parentNode) {
+                item.parentNode.removeChild(item);
+            }
+            this.collections.shownTypes.delete(type);
+
+            if (this.state.currentTypeFilter === type) {
+                this.state.currentTypeFilter = null;
+                this.debouncedFilter();
+                this.debouncedUpdate();
+            }
+        }
+
+        updateStats(visibleItems) {
+            const total = visibleItems.length;
+            this.elements.statsDiv.textContent = `Total edits: ${total}`;
+        }
+
+        updateDateFilterDisplay() {
+            const dateStatus = this.elements.dateContainer.querySelector('.date-status');
+            if (dateStatus) {
+                if (this.state.currentDateFilter) {
+                    const startDate = this.state.currentDateFilter.toLocaleDateString();
+                    if (this.state.currentDateRangeEnd) {
+                        const endDate = this.state.currentDateRangeEnd.toLocaleDateString();
+                        dateStatus.textContent = `Filtering: ${startDate} - ${endDate}`;
                     } else {
-                        if (!isDateInRange(dateText)) {
-                            visible = false;
-                        }
+                        dateStatus.textContent = `Filtering: ${startDate}`;
                     }
-                }
-            }
-
-            item.style.display = visible ? '' : 'none';
-        });
-
-        // Update numbering after filtering
-        updateEditNumbering();
-    }
-
-    // outline the active filter buttons
-    function updateActiveButtons() {
-        shownStatuses.forEach((btn, name) => {
-            btn.style.outline = (name === currentStatusFilter) ?
-                '2px solid blue' :
-                'none';
-        });
-        shownTypes.forEach((btn, type) => {
-            btn.style.outline = (type === currentTypeFilter) ?
-                '2px solid blue' :
-                'none';
-        });
-    }
-
-    // make an element draggable by its header
-    function makeDraggable(el, handleSelector) {
-        const handle = el.querySelector(handleSelector);
-        if (!handle) return;
-        handle.style.cursor = 'move';
-        let offsetX = 0,
-            offsetY = 0;
-
-        handle.addEventListener('pointerdown', e => {
-            const r = el.getBoundingClientRect();
-            el.style.left = `${r.left}px`;
-            el.style.top = `${r.top}px`;
-            el.style.right = 'auto';
-            el.style.transform = 'none';
-            offsetX = e.clientX - r.left;
-            offsetY = e.clientY - r.top;
-            el.setPointerCapture(e.pointerId);
-            e.preventDefault();
-        });
-
-        el.addEventListener('pointermove', e => {
-            if (!el.hasPointerCapture(e.pointerId)) return;
-            el.style.left = `${e.clientX - offsetX}px`;
-            el.style.top = `${e.clientY - offsetY}px`;
-        });
-        ['pointerup', 'pointercancel'].forEach(evt => {
-            el.addEventListener(evt, e => {
-                if (el.hasPointerCapture(e.pointerId)) {
-                    el.releasePointerCapture(e.pointerId);
-                }
-            });
-        });
-    }
-
-    function updateButtonsAndStats() {
-        // find scroll container if not found yet
-        if (!scrollContainer) {
-            scrollContainer = findScrollContainer();
-        }
-
-        // grab only those items not hidden by filterEdits()
-        const visibleItems = Array.from(editsContainer.children)
-            .filter(item => getComputedStyle(item).display !== 'none');
-
-        // --- STATUS COUNTS based on visibleItems ---
-        const sCounts = {};
-        STATUSES.forEach(s => {
-            sCounts[s.name] = 0;
-        });
-        visibleItems.forEach(item => {
-            STATUSES.forEach(s => {
-                if (item.querySelector(`.${s.className}`)) {
-                    sCounts[s.name]++;
-                }
-            });
-        });
-
-        const total = Object.values(sCounts).reduce((a, b) => a + b, 0);
-        statsDiv.textContent = `Total edits: ${total}`;
-
-        // update/add/remove status buttons
-        STATUSES.forEach(s => {
-            const count = sCounts[s.name] || 0;
-            const present = count > 0;
-
-            if (present && !shownStatuses.has(s.name)) {
-                const btn = document.createElement('button');
-                btn.textContent = `${s.name} (${count})`;
-                Object.assign(btn.style, {
-                    backgroundColor: s.color,
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#ffffff',
-                    padding: '6px 10px',
-                    margin: '0 4px 4px 0',
-                    cursor: 'pointer'
-                });
-                btn.addEventListener('click', () => {
-                    currentStatusFilter =
-                        currentStatusFilter === s.name ? null : s.name;
-                    filterEdits();
-                    updateButtonsAndStats(); // ← re-draw counts
-                });
-                shownStatuses.set(s.name, btn);
-                btnContainer.appendChild(btn);
-
-            } else if (present && shownStatuses.has(s.name)) {
-                shownStatuses.get(s.name).textContent = `${s.name} (${count})`;
-
-            } else if (!present && shownStatuses.has(s.name)) {
-                const btn = shownStatuses.get(s.name);
-                btnContainer.removeChild(btn);
-                shownStatuses.delete(s.name);
-                if (currentStatusFilter === s.name) {
-                    currentStatusFilter = null;
-                    filterEdits();
-                    updateButtonsAndStats();
-                }
-            }
-        });
-
-        // --- TYPE COUNTS based on visibleItems ---
-        const typeCounts = {};
-        visibleItems.forEach(item => {
-            const b = item.querySelectorAll('.BjkJBb')[0]?.children[1];
-            if (!b) return;
-            b.textContent.split(',').forEach(part => {
-                const txt = part.trim();
-                if (!txt) return;
-                typeCounts[txt] = (typeCounts[txt] || 0) + 1;
-            });
-        });
-        Object.entries(typeCounts).forEach(([type, count]) => {
-            const present = count > 0;
-            if (present && !shownTypes.has(type)) {
-                const btn = document.createElement('button');
-                btn.textContent = `${type} (${count})`;
-                Object.assign(btn.style, {
-                    backgroundColor: 'lightgray',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#000',
-                    padding: '6px 10px',
-                    margin: '0 4px 4px 0',
-                    cursor: 'pointer'
-                });
-                btn.addEventListener('click', () => {
-                    currentTypeFilter = currentTypeFilter === type ? null : type;
-                    filterEdits();
-                    updateButtonsAndStats(); // ← re-draw counts
-                });
-                shownTypes.set(type, btn);
-                typeContainer.appendChild(btn);
-
-            } else if (present && shownTypes.has(type)) {
-                shownTypes.get(type).textContent = `${type} (${count})`;
-
-            } else if (!present && shownTypes.has(type)) {
-                const btn = shownTypes.get(type);
-                typeContainer.removeChild(btn);
-                shownTypes.delete(type);
-                if (currentTypeFilter === type) {
-                    currentTypeFilter = null;
-                    filterEdits();
-                    updateButtonsAndStats();
-                }
-            }
-        });
-
-        // Update date filter display
-        updateDateFilterDisplay();
-
-        // Update date input constraints based on available edits
-        updateDateInputConstraints();
-
-        // Update go-to-edit constraints
-        updateGoToEditConstraints();
-
-        // Update edit numbering
-        updateEditNumbering();
-
-        // auto-scroll if needed
-        if (autoLoadEnabled && scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-
-        updateActiveButtons();
-    }
-
-    // Update date filter display
-    function updateDateFilterDisplay() {
-        const dateStatus = dateContainer.querySelector('.date-status');
-        if (dateStatus) {
-            if (currentDateFilter) {
-                const startDate = currentDateFilter.toLocaleDateString();
-                if (currentDateRangeEnd) {
-                    const endDate = currentDateRangeEnd.toLocaleDateString();
-                    dateStatus.textContent = `Filtering: ${startDate} - ${endDate}`;
+                    dateStatus.style.color = '#4285f4';
+                    dateStatus.style.fontWeight = 'bold';
                 } else {
-                    dateStatus.textContent = `Filtering: ${startDate}`;
+                    dateStatus.textContent = 'No date filter active';
+                    dateStatus.style.color = '#666';
+                    dateStatus.style.fontWeight = 'normal';
                 }
-                dateStatus.style.color = '#4285f4';
-                dateStatus.style.fontWeight = 'bold';
+            }
+        }
+
+        updateGoToEditConstraints() {
+            const goToInput = this.elements.popup?.querySelector('.go-to-edit-input');
+            const goToBtn = this.elements.popup?.querySelector('.go-to-edit-btn');
+
+            if (!goToInput || !goToBtn || !this.elements.editsContainer) return;
+
+            const visibleItems = Array.from(this.elements.editsContainer.children).filter(item =>
+                getComputedStyle(item).display !== 'none'
+            );
+
+            const maxNumber = visibleItems.length;
+
+            if (maxNumber === 0) {
+                goToInput.disabled = true;
+                goToBtn.disabled = true;
+                goToInput.placeholder = 'No edits available';
+                goToInput.title = 'No edits available to navigate to';
             } else {
-                dateStatus.textContent = 'No date filter active';
-                dateStatus.style.color = '#666';
-                dateStatus.style.fontWeight = 'normal';
+                goToInput.disabled = false;
+                goToBtn.disabled = false;
+                goToInput.placeholder = `1-${maxNumber}`;
+                goToInput.title = `Enter edit number between 1 and ${maxNumber}`;
+                goToInput.max = maxNumber;
+                goToInput.min = 1;
             }
         }
-    }
 
-    // Clear date filter
-    function clearDateFilter() {
-        currentDateFilter = null;
-        currentDateRangeEnd = null;
-        filterEdits();
-        updateButtonsAndStats();
-    }
+        makeDraggable(element, handleSelector) {
+            const handle = element.querySelector(handleSelector);
+            if (!handle) return;
 
-    // build the floating popup
-    function createPopup() {
-        popup = document.createElement('div');
-        Object.assign(popup.style, {
-            position: 'fixed',
-            top: '10px',
-            right: '10px',
-            backgroundColor: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: '6px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-            padding: '10px',
-            zIndex: '9999',
-            textAlign: 'left',
-            width: '280px'
-        });
+            handle.style.cursor = 'move';
+            let offsetX = 0,
+                offsetY = 0;
 
-        // stats
-        statsDiv = document.createElement('div');
-        statsDiv.textContent = 'Total edits: 0';
-        statsDiv.classList.add('drag-handle');
-        statsDiv.style.marginBottom = '8px';
-        popup.appendChild(statsDiv);
-
-        // header / drag handle
-        const header = document.createElement('div');
-        header.textContent = 'Filter edits by status:';
-        header.style.marginBottom = '8px';
-        popup.appendChild(header);
-
-        // status buttons container
-        btnContainer = document.createElement('div');
-        popup.appendChild(btnContainer);
-
-        // type header + container
-        const typeHeader = document.createElement('div');
-        typeHeader.textContent = 'Filter edits by type:';
-        typeHeader.style.margin = '8px 0 4px';
-        popup.appendChild(typeHeader);
-
-        typeContainer = document.createElement('div');
-        popup.appendChild(typeContainer);
-
-        // date header + container
-        const dateHeader = document.createElement('div');
-        dateHeader.textContent = 'Filter edits by date:';
-        dateHeader.style.margin = '8px 0 4px';
-        popup.appendChild(dateHeader);
-
-        dateContainer = document.createElement('div');
-
-        // Date status display
-        const dateStatus = document.createElement('div');
-        dateStatus.className = 'date-status';
-        dateStatus.textContent = 'No date filter active';
-        dateStatus.style.cssText = `
-            margin-bottom: 8px;
-            font-size: 12px;
-            color: #666;
-        `;
-        dateContainer.appendChild(dateStatus);
-
-        // Date input container
-        const dateInputContainer = document.createElement('div');
-        dateInputContainer.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            margin-bottom: 8px;
-        `;
-
-        // Start date input
-        const startDateInput = document.createElement('input');
-        startDateInput.type = 'date';
-        startDateInput.style.cssText = `
-            padding: 4px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 12px;
-        `;
-        startDateInput.addEventListener('change', () => {
-            if (startDateInput.value) {
-                const selectedDate = new Date(startDateInput.value + 'T00:00:00');
-                const today = new Date();
-                today.setHours(23, 59, 59, 999); // End of today
-
-                // Validate date is not in the future
-                if (selectedDate > today) {
-                    alert('Cannot select a future date');
-                    startDateInput.value = '';
-                    return;
-                }
-
-                // Validate date is within available edit range
-                const dateRange = getEditDateRange();
-                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
-                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateString()}`);
-                    startDateInput.value = '';
-                    return;
-                }
-
-                currentDateFilter = selectedDate;
-                // If end date is set and start > end, clear end date
-                if (currentDateRangeEnd && currentDateFilter > currentDateRangeEnd) {
-                    currentDateRangeEnd = null;
-                    endDateInput.value = '';
-                }
-                filterEdits();
-                updateButtonsAndStats();
-            } else {
-                currentDateFilter = null;
-                currentDateRangeEnd = null;
-                filterEdits();
-                updateButtonsAndStats();
-            }
-        });
-
-        // End date input (for range selection)
-        const endDateInput = document.createElement('input');
-        endDateInput.type = 'date';
-        endDateInput.placeholder = 'End date (optional)';
-        endDateInput.style.cssText = `
-            padding: 4px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 12px;
-        `;
-        endDateInput.addEventListener('change', () => {
-            if (endDateInput.value) {
-                const selectedDate = new Date(endDateInput.value + 'T23:59:59');
-                const today = new Date();
-                today.setHours(23, 59, 59, 999); // End of today
-
-                // Validate date is not in the future
-                if (selectedDate > today) {
-                    alert('Cannot select a future date');
-                    endDateInput.value = '';
-                    return;
-                }
-
-                // Validate date is within available edit range
-                const dateRange = getEditDateRange();
-                if (dateRange.hasEdits && (selectedDate < dateRange.min || selectedDate > dateRange.max)) {
-                    alert(`Please select a date between ${dateRange.min.toLocaleDateString()} and ${dateRange.max.toLocaleDateString()}`);
-                    endDateInput.value = '';
-                    return;
-                }
-
-                if (currentDateFilter && selectedDate >= currentDateFilter) {
-                    currentDateRangeEnd = selectedDate;
-                } else if (!currentDateFilter) {
-                    // If no start date, set both to same date
-                    currentDateFilter = new Date(endDateInput.value + 'T00:00:00');
-                    currentDateRangeEnd = selectedDate;
-                    startDateInput.value = endDateInput.value;
-                } else {
-                    // End date is before start date, swap them
-                    currentDateRangeEnd = currentDateFilter;
-                    currentDateFilter = new Date(endDateInput.value + 'T00:00:00');
-                    startDateInput.value = endDateInput.value;
-                }
-                filterEdits();
-                updateButtonsAndStats();
-            } else {
-                currentDateRangeEnd = null;
-                filterEdits();
-                updateButtonsAndStats();
-            }
-        });
-
-        // Labels and inputs
-        const startLabel = document.createElement('label');
-        startLabel.textContent = 'Start date:';
-        startLabel.style.fontSize = '12px';
-
-        const endLabel = document.createElement('label');
-        endLabel.textContent = 'End date (optional):';
-        endLabel.style.fontSize = '12px';
-
-        dateInputContainer.appendChild(startLabel);
-        dateInputContainer.appendChild(startDateInput);
-        dateInputContainer.appendChild(endLabel);
-        dateInputContainer.appendChild(endDateInput);
-
-        // Quick date buttons
-        const quickDateContainer = document.createElement('div');
-        quickDateContainer.style.cssText = `
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-            margin-bottom: 8px;
-        `;
-
-        const quickDates = [{
-                name: 'Today',
-                days: 0
-            },
-            {
-                name: 'Yesterday',
-                days: 1
-            },
-            {
-                name: 'Last 7 days',
-                days: 7
-            },
-            {
-                name: 'Last 30 days',
-                days: 30
-            }
-        ];
-
-        quickDates.forEach(({
-            name,
-            days
-        }) => {
-            const btn = document.createElement('button');
-            btn.textContent = name;
-            btn.className = 'quick-date-btn';
-            btn.style.cssText = `
-                background: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                cursor: pointer;
-                flex: 1;
-            `;
-            btn.addEventListener('click', () => {
-                // Check if we have edits available
-                const dateRange = getEditDateRange();
-                if (!dateRange.hasEdits) {
-                    alert('No edits available for date filtering');
-                    return;
-                }
-
-                const now = new Date();
-                if (days === 0) {
-                    // Today only - check if we have edits for today
-                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                    if (today < dateRange.min || today > dateRange.max) {
-                        alert('No edits available for today');
-                        return;
-                    }
-                    currentDateFilter = today;
-                    currentDateRangeEnd = null;
-                    startDateInput.value = currentDateFilter.toISOString().split('T')[0];
-                    endDateInput.value = '';
-                } else {
-                    // Range from X days ago to today
-                    let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
-                    const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-                    // Adjust start date if it's before our earliest edit
-                    if (startDate < dateRange.min) {
-                        startDate = dateRange.min;
-                    }
-
-                    // Check if the range contains any edits
-                    if (startDate > dateRange.max) {
-                        alert(`No edits available in the last ${days} days`);
-                        return;
-                    }
-
-                    currentDateFilter = startDate;
-                    currentDateRangeEnd = endDate;
-                    startDateInput.value = startDate.toISOString().split('T')[0];
-                    endDateInput.value = endDate.toISOString().split('T')[0];
-                }
-                filterEdits();
-                updateButtonsAndStats();
+            handle.addEventListener('pointerdown', (e) => {
+                const rect = element.getBoundingClientRect();
+                element.style.cssText += `left: ${rect.left}px; top: ${rect.top}px; right: auto; transform: none;`;
+                offsetX = e.clientX - rect.left;
+                offsetY = e.clientY - rect.top;
+                element.setPointerCapture(e.pointerId);
+                e.preventDefault();
             });
-            quickDateContainer.appendChild(btn);
-        });
 
-        // Clear button
-        const clearBtn = document.createElement('button');
-        clearBtn.textContent = 'Clear Filter';
-        clearBtn.className = 'clear-date-btn';
-        clearBtn.style.cssText = `
-            background: #dc362e;
-            border: none;
-            border-radius: 4px;
-            color: white;
-            padding: 6px 12px;
-            font-size: 12px;
-            cursor: pointer;
-            width: 100%;
-        `;
-        clearBtn.addEventListener('click', () => {
-            startDateInput.value = '';
-            endDateInput.value = '';
-            clearDateFilter();
-        });
-
-        dateContainer.appendChild(dateInputContainer);
-        dateContainer.appendChild(quickDateContainer);
-        dateContainer.appendChild(clearBtn);
-        popup.appendChild(dateContainer);
-
-        // Go to edit number section
-        const goToEditHeader = document.createElement('div');
-        goToEditHeader.textContent = 'Go to edit number:';
-        goToEditHeader.style.margin = '8px 0 4px';
-        popup.appendChild(goToEditHeader);
-
-        const goToEditContainer = document.createElement('div');
-        goToEditContainer.className = 'go-to-edit-container';
-
-        const goToEditInput = document.createElement('input');
-        goToEditInput.type = 'number';
-        goToEditInput.className = 'go-to-edit-input';
-        goToEditInput.placeholder = 'Edit #';
-        goToEditInput.min = 1;
-        goToEditInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                const targetNumber = parseInt(goToEditInput.value);
-                if (targetNumber) {
-                    goToEditNumber(targetNumber);
-                    goToEditInput.value = '';
-                }
-            }
-        });
-
-        const goToEditBtn = document.createElement('button');
-        goToEditBtn.textContent = 'Go';
-        goToEditBtn.className = 'go-to-edit-btn';
-        goToEditBtn.addEventListener('click', () => {
-            const targetNumber = parseInt(goToEditInput.value);
-            if (targetNumber) {
-                goToEditNumber(targetNumber);
-                goToEditInput.value = '';
-            }
-        });
-
-        goToEditContainer.appendChild(goToEditInput);
-        goToEditContainer.appendChild(goToEditBtn);
-        popup.appendChild(goToEditContainer);
-
-        // Edit numbering controls
-        const numberingHeader = document.createElement('div');
-        numberingHeader.textContent = 'Options: ';
-        numberingHeader.style.margin = '8px 0 4px';
-        popup.appendChild(numberingHeader);
-
-        const numberingContainer = document.createElement('div');
-        numberingContainer.style.marginBottom = '8px';
-
-        const toggleBtn = document.createElement('button');
-        toggleBtn.textContent = numberingEnabled ? 'Hide Numbers' : 'Show Numbers';
-        toggleBtn.className = 'toggle-numbering-btn';
-        toggleBtn.style.cssText = `
-            background: ${numberingEnabled ? '#ea4335' : '#34a853'};
-            border: none;
-            border-radius: 4px;
-            color: white;
-            padding: 6px 12px;
-            font-size: 12px;
-            cursor: pointer;
-            width: 100%;
-        `;
-        toggleBtn.addEventListener('click', toggleEditNumbering);
-
-        // auto-load button
-
-        const autoLoadBtn = document.createElement('button');
-        autoLoadBtn.textContent = autoLoadEnabled ? 'Disable Auto Load' : 'Enable Auto Load';
-        autoLoadBtn.className = 'toggle-autoload-btn';
-        autoLoadBtn.style.cssText = `
-            background: ${autoLoadEnabled ? '#ea4335' : '#34a853'};
-            border: none;
-            border-radius: 4px;
-            color: white;
-            padding: 6px 12px;
-            font-size: 12px;
-            cursor: pointer;
-            width: 100%;
-            margin-bottom: 8px;
-        `;
-        autoLoadBtn.addEventListener('click', toggleAutoLoad);
-
-        numberingContainer.appendChild(autoLoadBtn);
-        numberingContainer.appendChild(toggleBtn);
-
-        popup.appendChild(numberingContainer);
-
-        document.body.appendChild(popup);
-        makeDraggable(popup, '.drag-handle');
-    }
-
-    // Updated function to watch for container with better retry logic
-    function watchForContainer() {
-        let retryCount = 0;
-        const maxRetries = 30; // Try for 30 seconds
-        const retryDelay = 1000; // 1 second intervals
-
-        function trySetup() {
-            console.log(`Attempting to find edits container (attempt ${retryCount + 1}/${maxRetries})`);
-
-            const edits = findEditsContainer();
-            if (!edits) {
-                retryCount++;
-                if (retryCount < maxRetries) {
-                    setTimeout(trySetup, retryDelay);
-                } else {
-                    console.warn('Could not find edits container after maximum retries');
-                }
-                return false;
-            }
-
-            console.log('Found edits container:', edits);
-            editsContainer = edits;
-
-            // Find scroll container
-            scrollContainer = findScrollContainer();
-            if (scrollContainer) {
-                console.log('Found scroll container:', scrollContainer);
-            }
-
-            updateButtonsAndStats();
-            if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
-                filterEdits();
-            }
-
-            containerObserver = new MutationObserver(() => {
-                updateButtonsAndStats();
-                if (currentStatusFilter || currentTypeFilter || currentDateFilter) {
-                    filterEdits();
+            element.addEventListener('pointermove', (e) => {
+                if (element.hasPointerCapture(e.pointerId)) {
+                    element.style.left = `${e.clientX - offsetX}px`;
+                    element.style.top = `${e.clientY - offsetY}px`;
                 }
             });
-            containerObserver.observe(editsContainer, {
-                childList: true
+
+            ['pointerup', 'pointercancel'].forEach(eventType => {
+                element.addEventListener(eventType, (e) => {
+                    if (element.hasPointerCapture(e.pointerId)) {
+                        element.releasePointerCapture(e.pointerId);
+                    }
+                });
             });
-            return true;
         }
 
-        trySetup();
-    }
-
-    function waitForElementAndClick(className, index = 0) {
-        const checkForElement = () => {
-            const elements = document.getElementsByClassName(className);
-
-            if (elements.length > index) {
-                elements[index].click();
-                console.log(`Clicked element: ${className}[${index}]`);
-                return;
-            }
-
-            setTimeout(checkForElement, 1000); // Check again in 1 second
-        };
-
-        checkForElement();
-    }
-
-    function checkInitState() {
-        if (window.location.href.includes("/contrib/") && !window.location.href.includes("/photos/") && !window.location.href.includes("/answers/") && !window.location.href.includes("/reviews/") && !window.location.href.includes("/contribute/")) {
-            if (isInit === false) {
-                console.log('Initializing Google Maps Enhanced Edits UI');
-                isInit = true;
-                createPopup();
-                setupAutoCleanup();
-                watchForContainer();
-            }
-        } else {
-            // Not on edits page anymore, deinitialize
-            if (isInit === true) {
-                deinitializeEditsUI();
-            }
-        }
-
-        if (isEventHandlersInit === false) {
-            isEventHandlersInit = true;
-            waitForElementAndClick("okDpye PpaGLb", 1);
+        waitForElementAndClick(className, index = 0) {
+            const checkForElement = () => {
+                const elements = document.getElementsByClassName(className);
+                if (elements.length > index) {
+                    elements[index].click();
+                    console.log(`Clicked element: ${className}[${index}]`);
+                    return;
+                }
+                setTimeout(checkForElement, 1000);
+            };
+            checkForElement();
         }
     }
 
-    document.addEventListener("DOMContentLoaded",function() {
-        var bodyList = document.querySelector('body');
-
-        var observer = new MutationObserver(function(mutations) {
-            if (oldHref != document.location.href) {
-                oldHref = document.location.href;
-                checkInitState();
-            }
-        });
-
-        var config = {
-            childList: true,
-            subtree: true
-        };
-
-        observer.observe(bodyList, config);
-        // Check on window load
-        checkInitState();
-    });
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => new GoogleMapsEnhancedEdits());
+    } else {
+        new GoogleMapsEnhancedEdits();
+    }
 })();
