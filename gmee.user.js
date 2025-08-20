@@ -55,6 +55,7 @@
     .fontTitleLarge.HYVdIf:hover {
       text-decoration: underline;
     }
+
     /* Date filter disabled states */
     .quick-date-btn:disabled,
     .clear-date-btn:disabled {
@@ -68,6 +69,7 @@
       color: #999 !important;
       cursor: not-allowed !important;
     }
+
     /* Edit numbering styles */
     .edit-number {
       position: relative;
@@ -111,6 +113,7 @@
       border-radius: 0% !important;
       margin-right: 5px !important;
     }
+
     /* Go to edit number styles */
     .go-to-edit-container {
       display: flex;
@@ -143,6 +146,7 @@
       color: #999;
       cursor: not-allowed;
     }
+
     /* Filter list styles */
     .filter-list {
       list-style: none;
@@ -194,6 +198,82 @@
       border-radius: 50%;
       margin-right: 8px;
       flex-shrink: 0;
+    }
+
+    /* ===== PURE CSS CLEANUP RULES ===== */
+
+    /* Hide first child of .eYfez elements */
+    .eYfez > *:first-child {
+      display: none !important;
+    }
+
+    /* Hide parent elements containing the symbol */
+    *:has(> .MaIKSd.google-symbols.G47vBd) {
+      display: none !important;
+    }
+
+    /* Hide status elements (they'll be replaced with colored borders) */
+    .cLk0Bb, .UgJ9Rc, .ehaAif, .gZbGnf {
+      display: none !important;
+    }
+
+    /* Add colored left borders based on status classes */
+    .Jo6p1e:has(.cLk0Bb) {
+      border-left: 10px solid #198639 !important; /* Accepted - Green */
+    }
+    .Jo6p1e:has(.UgJ9Rc) {
+      border-left: 10px solid #b26c00 !important; /* Pending - Orange */
+    }
+    .Jo6p1e:has(.ehaAif) {
+      border-left: 10px solid #dc362e !important; /* Not Accepted - Red */
+    }
+    .Jo6p1e:has(.gZbGnf) {
+      border-left: 10px solid #5e5e5e !important; /* Incorrect - Gray */
+    }
+
+    /* Add tooltip styling and behavior */
+    .fontTitleLarge.HYVdIf {
+      cursor: pointer;
+      position: relative;
+    }
+    .fontTitleLarge.HYVdIf::after {
+      content: "Go to map edit";
+      position: absolute;
+      display: none;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      z-index: 1000;
+      pointer-events: none;
+      top: 100%;
+      left: 0;
+      margin-top: 4px;
+    }
+    .fontTitleLarge.HYVdIf:hover::after {
+      display: block;
+    }
+
+    /* Fallback for browsers without :has() support */
+    @supports not selector(*:has(*)) {
+      .gmee-symbol-parent {
+        display: none !important;
+      }
+      /* Fallback colored borders using class-based approach */
+      .gmee-status-accepted .Jo6p1e {
+        border-left: 10px solid #198639 !important;
+      }
+      .gmee-status-pending .Jo6p1e {
+        border-left: 10px solid #b26c00 !important;
+      }
+      .gmee-status-not-accepted .Jo6p1e {
+        border-left: 10px solid #dc362e !important;
+      }
+      .gmee-status-incorrect .Jo6p1e {
+        border-left: 10px solid #5e5e5e !important;
+      }
     }
   `;
     document.head.appendChild(style);
@@ -444,8 +524,13 @@
         // Reset initialization flags
         isInit = false;
 
-        // Remove edit numbers from any remaining elements
-        document.querySelectorAll('.edit-number').forEach(el => el.remove());
+        // Hide edit numbers instead of removing them
+        document.querySelectorAll('.edit-number').forEach(el => el.classList.add('hidden'));
+
+        // Remove CSS classes for symbol parents (fallback cleanup)
+        document.querySelectorAll('.gmee-symbol-parent').forEach(el => {
+            el.classList.remove('gmee-symbol-parent');
+        });
 
         console.log('UI deinitialized successfully');
     }
@@ -707,81 +792,53 @@
         }
     }
 
-    // Add numbering to all edit items (moved to global scope)
+    // Add numbering to all edit items
     function addEditNumbering() {
         const PANE_SELECTOR = '.EhpEb';
         document.querySelectorAll(PANE_SELECTOR).forEach((item, index) => {
             const wrap = item.querySelector('.qjoALb');
             if (!wrap) return;
 
-            // Remove existing number if present
-            const existingNumber = wrap.querySelector('.edit-number');
-            if (existingNumber) {
-                existingNumber.remove();
-            }
+            // Look for existing number element
+            let existingNumber = wrap.querySelector('.edit-number');
 
-            // Add new number only if numbering is enabled
             if (numberingEnabled) {
-                const numberElement = document.createElement('div');
-                numberElement.className = 'edit-number';
-                numberElement.textContent = index + 1;
-                wrap.insertBefore(numberElement, wrap.children[0]);
+                if (existingNumber) {
+                    // Reuse existing number element
+                    existingNumber.textContent = index + 1;
+                    existingNumber.classList.remove('hidden');
+                } else {
+                    // Create new number element if it doesn't exist
+                    const numberElement = document.createElement('div');
+                    numberElement.className = 'edit-number';
+                    numberElement.textContent = index + 1;
+                    wrap.insertBefore(numberElement, wrap.children[0]);
+                }
+            } else {
+                // Hide existing number instead of removing it
+                if (existingNumber) {
+                    existingNumber.classList.add('hidden');
+                }
             }
         });
     }
 
-    // Automatically clean up .eYfez panes and symbol parents
+    // Simplified auto cleanup - only JS-dependent functions remain
+    // Simplified auto cleanup - most functionality moved to CSS
     function setupAutoCleanup() {
-        const CLEAN_SELECTOR = '.eYfez';
-        const SYMBOL_SELECTOR = '.MaIKSd.google-symbols.G47vBd';
-        const PANE_SELECTOR = '.EhpEb'
-        const EDIT_NAME_SELECTOR = '.fontTitleLarge.HYVdIf'
         autoCleanupObserver = new MutationObserver(() => {
-            cleanPanes();
-            removeSymbolParents();
-            replaceSpecificEdit();
-            addColorStrip();
-            addTooltipToEditName();
-            addEditNumberingLocal();
-            makeImagesSquare();
-        });
-
-        // remove first child of each .eYfez pane
-        function cleanPanes() {
-            document.querySelectorAll(CLEAN_SELECTOR).forEach(pane => {
-                const first = pane.firstElementChild;
-                if (first && pane.children.length >= 2) first.remove();
-            });
-        }
-
-        function makeImagesSquare() {
-            Array.from(document.getElementsByClassName("PInAKb")).forEach((e) => {
-                let squareBgImage = e.style.backgroundImage.split("-br100").join("");
-                e.style.backgroundImage = squareBgImage;
-            });
-        }
-
-        // remove the parent of any matching symbol element
-        function removeSymbolParents() {
-            document.querySelectorAll(SYMBOL_SELECTOR).forEach(el => {
-                const p = el.parentElement;
-                if (p) {
-                    p.style = "display: none !important;";
-                }
-            });
-        }
-
-        function replaceSpecificEdit() {
-            // Skip replacement when auto load is enabled
             if (autoLoadEnabled) {
                 return;
             }
+            replaceSpecificEdit();
+            addEditNumberingLocal();
+            legacyBrowserFallbacks();
+        });
 
+        function replaceSpecificEdit() {
             autoCleanupObserver.disconnect();
-            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
-                const mediumEl = item.querySelector(
-                    '.fontBodyMedium.JjQyvd.TqOXoe'
-                );
+            document.querySelectorAll('.EhpEb').forEach(item => {
+                const mediumEl = item.querySelector('.fontBodyMedium.JjQyvd.TqOXoe');
                 const smallEl = item.querySelectorAll('.BjkJBb')[0]?.children[1];
                 if (mediumEl && smallEl) {
                     const texts = Array.from(
@@ -789,38 +846,6 @@
                     ).map(el => el.textContent.trim());
                     smallEl.textContent = texts.join(', ');
                 }
-            });
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        function addColorStrip() {
-            autoCleanupObserver.disconnect();
-            document.querySelectorAll(PANE_SELECTOR).forEach(item => {
-                const wrap = item.querySelector('.Jo6p1e');
-                if (!wrap) return;
-                // find which status this item has
-                const statusObj = STATUSES.find(s => item.querySelector(`.${s.className}`));
-                if (statusObj) {
-                    wrap.style.borderLeft = `10px solid ${statusObj.color}`;
-                    item.querySelector(`.${statusObj.className}`).style = "display: none !important;";
-                } else {
-                    // no status found → clear any old border
-                    wrap.style.borderLeft = '';
-                }
-            });
-            autoCleanupObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        function addTooltipToEditName() {
-            autoCleanupObserver.disconnect();
-            document.querySelectorAll(EDIT_NAME_SELECTOR).forEach(item => {
-                item.title = "Go to map edit";
             });
             autoCleanupObserver.observe(document.body, {
                 childList: true,
@@ -837,14 +862,42 @@
             });
         }
 
+        // Only needed for browsers that don't support :has() selector
+        function legacyBrowserFallbacks() {
+            if (!CSS.supports('selector(*:has(*))')) {
+                // Fallback for hiding symbol parents
+                document.querySelectorAll('.MaIKSd.google-symbols.G47vBd').forEach(el => {
+                    const p = el.parentElement;
+                    if (p && !p.classList.contains('gmee-symbol-parent')) {
+                        p.classList.add('gmee-symbol-parent');
+                    }
+                });
 
-        // initial pass
-        cleanPanes();
-        removeSymbolParents();
+                // Fallback for status-based colored borders
+                document.querySelectorAll('.EhpEb').forEach(item => {
+                    // Remove old status classes
+                    item.classList.remove('gmee-status-accepted', 'gmee-status-pending',
+                        'gmee-status-not-accepted', 'gmee-status-incorrect');
+
+                    // Add appropriate status class
+                    if (item.querySelector('.cLk0Bb')) {
+                        item.classList.add('gmee-status-accepted');
+                    } else if (item.querySelector('.UgJ9Rc')) {
+                        item.classList.add('gmee-status-pending');
+                    } else if (item.querySelector('.ehaAif')) {
+                        item.classList.add('gmee-status-not-accepted');
+                    } else if (item.querySelector('.gZbGnf')) {
+                        item.classList.add('gmee-status-incorrect');
+                    }
+                });
+            }
+        }
+
+        // Initial pass
         replaceSpecificEdit();
-        addColorStrip();
-        addTooltipToEditName();
         addEditNumberingLocal();
+        legacyBrowserFallbacks();
+
         autoCleanupObserver.observe(document.body, {
             childList: true,
             subtree: true
@@ -866,13 +919,13 @@
                 // Item is visible, update number
                 if (numberElement) {
                     numberElement.textContent = visibleIndex;
-                    numberElement.style.display = '';
+                    numberElement.classList.remove('hidden');
                 }
                 visibleIndex++;
             } else {
                 // Item is hidden, hide number
                 if (numberElement) {
-                    numberElement.style.display = 'none';
+                    numberElement.classList.add('hidden');
                 }
             }
         });
@@ -883,20 +936,9 @@
         numberingEnabled = !numberingEnabled;
         saveNumberingPreference(); // Save to localStorage
 
-        if (numberingEnabled) {
-            // Show all existing numbers
-            document.querySelectorAll('.edit-number').forEach(numberEl => {
-                numberEl.classList.remove('hidden');
-            });
-            // Re-add numbering to any items that don't have numbers yet
-            addEditNumbering();
-            updateEditNumbering();
-        } else {
-            // Hide all numbers
-            document.querySelectorAll('.edit-number').forEach(numberEl => {
-                numberEl.classList.add('hidden');
-            });
-        }
+        // Update all existing numbers
+        addEditNumbering();
+        updateEditNumbering();
 
         // Update toggle button text
         const toggleBtn = document.querySelector('.toggle-numbering-btn');
