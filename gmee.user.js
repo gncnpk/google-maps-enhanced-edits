@@ -772,6 +772,11 @@
         }
 
         function replaceSpecificEdit() {
+            // Skip replacement when auto load is enabled
+            if (autoLoadEnabled) {
+                return;
+            }
+
             autoCleanupObserver.disconnect();
             document.querySelectorAll(PANE_SELECTOR).forEach(item => {
                 const mediumEl = item.querySelector(
@@ -1691,7 +1696,7 @@
         }
     }
 
-    document.addEventListener("DOMContentLoaded",function() {
+    document.addEventListener("DOMContentLoaded", function() {
         var bodyList = document.querySelector('body');
 
         var observer = new MutationObserver(function(mutations) {
